@@ -218,3 +218,30 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Project Data & Checkpoints (keep folder structure via .gitkeep)
+data/raw/*
+!data/raw/.gitkeep
+data/processed/*
+!data/processed/.gitkeep
+data/tokenizer/*
+!data/tokenizer/.gitkeep
+checkpoints/*
+!checkpoints/.gitkeep
+
+# Experiment Tracking Logs
+wandb/
+runs/
+outputs/
+
+# LaTeX build artifacts
+*.aux
+*.bbl
+*.blg
+*.fdb_latexmk
+*.fls
+*.lof
+*.lot
+*.out
+*.synctex.gz
+*.toc
