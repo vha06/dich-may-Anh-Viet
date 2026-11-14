@@ -234,6 +234,9 @@ wandb/
 runs/
 outputs/
 
+# Local draft data reports (keep private)
+docs/data
+
 # LaTeX build artifacts
 *.aux
 *.bbl
