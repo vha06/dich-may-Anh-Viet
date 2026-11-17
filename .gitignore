@@ -234,8 +234,9 @@ wandb/
 runs/
 outputs/
 
-# Local draft data reports (keep private)
-docs/data
+# Local draft data QA & notes (keep private, allow official reports)
+docs/data/*
+!docs/data/*_report.md
 
 # LaTeX build artifacts
 *.aux
