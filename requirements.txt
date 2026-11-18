@@ -1,0 +1,15 @@
+# Core Deep Learning & Tokenization
+torch>=2.0.0
+tokenizers>=0.15.0
+numpy>=1.24.0
+
+# Evaluation Metrics (Standard WMT/ACL BLEU)
+sacrebleu>=2.4.0
+
+# Configuration, Visualization & Utilities
+pyyaml>=6.0
+matplotlib>=3.7.0
+tqdm>=4.65.0
+
+# Testing
+pytest>=7.4.0
