@@ -140,7 +140,7 @@ Số liệu trích xuất trực tiếp từ [`data/processed/stats.json`](file:
   - *Tập `val`:* Cặp `("Thank you .", "Cảm ơn .")` xuất hiện 2 lần (dòng 524, 1423) và `("Thank you .", "Cám ơn các bạn .")` xuất hiện 2 lần (dòng 1362, 1479) $\rightarrow$ **giữ nguyên tất cả**, bảo toàn đủ **1,553** cặp câu chuẩn.
   - *Tập `test`:* Cặp `("Thank you .", "Cảm ơn .")` xuất hiện 4 lần (dòng 490, 517, 721, 881) và `("Thank you .", "Cảm ơn các bạn .")` xuất hiện 3 lần (dòng 681, 768, 1144) $\rightarrow$ **giữ nguyên tất cả**, bảo toàn đủ **1,268** cặp câu chuẩn.
 
-#### C. Ví dụ minh họa cho Thống kê Độ dài câu (số dòng tính trên `data/processed/train.{en,vi}`, khác với `data/raw/` do đã lọc bỏ 1,375 dòng)
+#### C. Ví dụ minh họa cho Thống kê Độ dài câu
 - **Ngắn nhất (`min = 1` từ EN / `1` từ VI — dòng 39,253 trong `data/processed/train.{en,vi}`):**
   - *EN (1 từ):* `.`
   - *VI (1 từ):* `.`
