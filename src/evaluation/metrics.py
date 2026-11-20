@@ -1,0 +1,66 @@
+"""Tính chỉ số SacreBLEU chuẩn cho đánh giá dịch máy."""
+from __future__ import annotations
+
+from collections.abc import Sequence
+from typing import Any
+
+try:
+    import sacrebleu
+except ImportError:
+    sacrebleu = None  # type: ignore[assignment]
+
+
+def compute_bleu(
+    hypotheses: Sequence[str],
+    references: Sequence[str] | Sequence[Sequence[str]],
+    tokenize: str = "13a",
+    lowercase: bool = False,
+) -> dict[str, Any]:
+    """Tính corpus SacreBLEU cho danh sách câu dịch và câu tham chiếu.
+
+    Args:
+        hypotheses: Danh sách N câu dịch của mô hình.
+        references: Danh sách N câu tham chiếu (1-1), hoặc K bộ tham chiếu mỗi bộ N câu.
+        tokenize: Bộ tách token của SacreBLEU (mặc định: "13a").
+        lowercase: Có chuyển về chữ thường trước khi chấm điểm hay không.
+    """
+    if sacrebleu is None:
+        raise ImportError("Thiếu thư viện 'sacrebleu'. Cài đặt bằng: pip install sacrebleu")
+
+    hyps = list(hypotheses)
+    if not hyps:
+        raise ValueError("Danh sách hypotheses không được rỗng.")
+
+    if references and isinstance(references[0], str):
+        ref_streams = [list(references)]  # type: ignore[arg-type]
+    else:
+        ref_streams = [list(r) for r in references]  # type: ignore[union-attr]
+
+    if not ref_streams or any(len(r) != len(hyps) for r in ref_streams):
+        raise ValueError(
+            f"Số câu hypotheses ({len(hyps)}) không khớp với references "
+            f"({[len(r) for r in ref_streams]})."
+        )
+
+    metric = sacrebleu.BLEU(tokenize=tokenize, lowercase=lowercase)
+    bleu = metric.corpus_score(hyps, ref_streams)
+    return {
+        "bleu": round(float(bleu.score), 2),
+        "precisions": [round(float(p), 2) for p in bleu.precisions],
+        "bp": round(float(bleu.bp), 4),
+        "sys_len": int(bleu.sys_len),
+        "ref_len": int(bleu.ref_len),
+        "signature": str(metric.get_signature()),
+    }
+
+
+if __name__ == "__main__":
+    sample_hyps = ["Tôi thích học dịch máy .", "Hôm nay trời đẹp ."]
+    sample_refs = ["Tôi thích học dịch máy .", "Hôm nay trời rất đẹp ."]
+    if sacrebleu is not None:
+        res = compute_bleu(sample_hyps, sample_refs)
+        assert 0.0 <= res["bleu"] <= 100.0
+        assert compute_bleu(sample_hyps, sample_hyps)["bleu"] == 100.0
+        print("OK:", res)
+    else:
+        print("Bỏ qua self-check vì chưa cài sacrebleu.")
