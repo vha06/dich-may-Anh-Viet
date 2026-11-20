@@ -224,5 +224,3 @@ Chạy lệnh sau từ thư mục gốc dự án để tái tạo `data/processe
 python3 src/data/preprocess.py --max-words 128
 ```
 
-> [!NOTE]
-> Script tải dữ liệu (`scripts/download_data.py`), script vẽ biểu đồ (`scripts/generate_charts.py`) và unit test (`tests/test_data_pipeline.py`) chưa có trong repo.
