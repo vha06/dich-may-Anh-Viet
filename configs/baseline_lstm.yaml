@@ -24,10 +24,10 @@ data:
   tokenizer_model: data/tokenizer/bpe.model
   train_en: data/processed/train.en
   train_vi: data/processed/train.vi
-  val_en: data/processed/tst2012.en
-  val_vi: data/processed/tst2012.vi
-  test_en: data/processed/tst2013.en
-  test_vi: data/processed/tst2013.vi
+  val_en: data/processed/val.en
+  val_vi: data/processed/val.vi
+  test_en: data/processed/test.en
+  test_vi: data/processed/test.vi
   max_len: 100
 
 checkpoint:
