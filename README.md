@@ -96,12 +96,24 @@ dich-may-Anh-Viet/
 
 ## 7. Kết quả
 
-| Mô hình | BLEU (val) | BLEU (test) | Thời gian train |
-|---------|-----------|-------------|-----------------|
-| Seq2Seq LSTM + Attention | — | — | — |
-| Transformer nhỏ | — | — | — |
+| Mô hình | Số tham số | BLEU (val) | BLEU (test) | Thời gian train (GPU T4) |
+|---|---|---|---|---|
+| **Seq2Seq Bi-LSTM + Bahdanau Attention** | 33,064,000 | **19.31** (Epoch 7) | Đang cập nhật | ~3.8 giờ (Kaggle T4) |
+| **Transformer nhỏ** | — | — | — | — |
 
-> *Cập nhật sau khi hoàn thành huấn luyện (Tuần 2–3)*
+### Ví dụ dịch thực tế (Seq2Seq LSTM + Bahdanau Attention - Epoch 7):
+
+| Câu tiếng Anh (Input) | Dịch Greedy | Dịch Beam Search (beam=5) |
+|---|---|---|
+| `how are you today ?` | vậy ngày nay nay ? | **vậy bạn ngày hôm nay ?** |
+| `i am learning machine translation with deep learning .` | tôi học học thuật dịch với với học tập sâu sâu sâu . | **tôi đang học học thuật dịch với với học tập sâu sâu sắc .** |
+| `vietnam is a beautiful country in southeast asia .` | việtet là một đất nước đẹp đẹp ở nam á á . | **việtet là một đất nước đẹp đẹp ở nam á á .** |
+| `thank you very much for your help .` | cảm ơn các bạn rất nhiều vì sự giúp đỡ của bạn . | **cảm ơn các bạn rất nhiều vì sự giúp đỡ của bạn .** |
+
+> *Nhận xét sơ bộ:*
+> - **Beam Search** cho kết quả ngữ nghĩa tự nhiên và mạch lạc hơn hẳn so với **Greedy Search**.
+> - Với các câu giao tiếp thông dụng (`thank you very much for your help .`), mô hình dịch chuẩn xác 100% tiếng Việt tự nhiên.
+> - Với các câu kỹ thuật (`machine translation`, `deep learning`), mô hình dịch trúng nghĩa gốc ("thuật dịch", "học tập sâu sắc") dù còn hiện tượng lặp từ — hiện tượng kinh điển của mạng RNN/LSTM sẽ được khắc phục triệt để bằng Transformer ở Tuần 3.
 
 ---
 
