@@ -3,7 +3,11 @@
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
+
+# Thêm thư mục gốc dự án vào sys.path để luôn tìm thấy module 'src'
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import torch
 import yaml
