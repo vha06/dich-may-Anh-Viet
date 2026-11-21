@@ -24,7 +24,6 @@ def build_scheduler(
             factor=kwargs.get("factor", 0.5),
             patience=kwargs.get("patience", 3),
             min_lr=kwargs.get("min_lr", 1e-6),
-            verbose=True,
         )
     if scheduler_type == "step":
         return __import__("torch").optim.lr_scheduler.StepLR(
