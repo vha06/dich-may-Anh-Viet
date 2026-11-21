@@ -238,6 +238,10 @@ outputs/
 docs/data/*
 !docs/data/*_report.md
 
+# Local draft seq2seq QA & notes (keep private, allow official reports)
+docs/seq2seq/*
+!docs/seq2seq/*_report.md
+
 # LaTeX build artifacts
 *.aux
 *.bbl
