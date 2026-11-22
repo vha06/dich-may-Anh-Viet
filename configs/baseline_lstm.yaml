@@ -1,5 +1,5 @@
 experiment:
-  name: baseline_lstm
+  name: ha_baseline_lstm
   seed: 42
   output_dir: outputs/baseline_lstm
   checkpoint_dir: checkpoints/baseline_lstm
@@ -52,7 +52,9 @@ wandb:
   enabled: true
   entity: nikoteen-iai-uet
   project: dich-may-Anh-Viet
+  group: phase2-baseline-lstm
   tags:
+    - ha
     - baseline
     - seq2seq
     - lstm
