@@ -111,7 +111,8 @@ class LuongAttention(nn.Module):
                 )
             scores = scores.masked_fill(~mask, float("-inf"))
 
-        attn_weights = torch.softmax(scores, dim=-1)  # (B, S_max)
+        # Cast to float32 before softmax for fp16/bf16 AMP stability
+        attn_weights = torch.softmax(scores.float(), dim=-1).to(encoder_outputs.dtype)  # (B, S_max)
         context = torch.bmm(attn_weights.unsqueeze(1), encoder_outputs).squeeze(1)
         return context, attn_weights
 
