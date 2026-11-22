@@ -88,6 +88,7 @@ def _init_wandb_run(
     return wandb.init(
         entity=wandb_cfg.get("entity"),
         project=wandb_cfg.get("project", "dich-may-Anh-Viet"),
+        group=wandb_cfg.get("group"),
         name=exp_cfg.get("name"),
         tags=wandb_cfg.get("tags"),
         config=cfg,
@@ -135,6 +136,18 @@ def parse_args() -> argparse.Namespace:
         help="Tat ghi log Weights & Biases cho lan chay nay",
     )
     parser.add_argument(
+        "--run-name",
+        type=str,
+        default=None,
+        help="Ghi de ten Run hien thi tren W&B (vi du: ha_seq2seq_lstm_v1)",
+    )
+    parser.add_argument(
+        "--wandb-group",
+        type=str,
+        default=None,
+        help="Ghi de nhom thu nghiem W&B group (vi du: phase2-baseline-lstm)",
+    )
+    parser.add_argument(
         "--max-train-batches",
         type=int,
         default=None,
@@ -163,6 +176,10 @@ def main() -> int:
         train_cfg["epochs"] = args.epochs
     if args.batch_size is not None:
         data_cfg["batch_size"] = args.batch_size
+    if args.run_name is not None:
+        exp_cfg["name"] = args.run_name
+    if args.wandb_group is not None:
+        cfg.setdefault("wandb", {})["group"] = args.wandb_group
 
     set_seed(int(exp_cfg.get("seed", 42)))
     device = resolve_device(args.device)
