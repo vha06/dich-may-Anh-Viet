@@ -191,6 +191,7 @@ def build_dataloaders(
     max_len: int = DEFAULT_MAX_SEQ_LEN,
     pre_tokenize: bool = True,
     num_workers: int = 0,
+    pin_memory: bool = False,
 ) -> dict[str, DataLoader]:
     """Construct train (shuffled) and val/test (deterministic) DataLoaders."""
     proc_dir = Path(processed_dir)
@@ -215,6 +216,7 @@ def build_dataloaders(
             batch_size=batch_size,
             shuffle=shuffle,
             num_workers=num_workers,
+            pin_memory=pin_memory,
         )
     return loaders
 
