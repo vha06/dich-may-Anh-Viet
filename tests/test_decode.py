@@ -6,6 +6,7 @@ import math
 import sys
 import unittest
 from pathlib import Path
+from typing import Any
 
 import torch
 import torch.nn as nn
@@ -343,6 +344,60 @@ class TestDecoding(unittest.TestCase):
         )
         self.assertEqual(custom_eval["strategy"], "custom")
         self.assertGreater(custom_eval["bleu"], 99.0)
+
+    def test_beam_search_contiguous_hidden_states_and_cuda_compat(self) -> None:
+        torch.manual_seed(42)
+        model = build_seq2seq_lstm(
+            src_vocab_size=80,
+            tgt_vocab_size=80,
+            embed_dim=32,
+            enc_hidden_dim=32,
+            num_layers=2,
+            dropout=0.1,
+            attention_method="general",
+        )
+        model.eval()
+        src_ids = torch.tensor(
+            [
+                [2, 11, 21, 31, 41, 3],
+                [2, 12, 22, 3, PAD_ID, PAD_ID],
+                [2, 13, 23, 33, 3, PAD_ID],
+            ],
+            dtype=torch.long,
+        )
+        src_lengths = torch.tensor([6, 4, 5], dtype=torch.long)
+
+        non_contiguous_calls = 0
+
+        def _check_hx_contiguous(_module: nn.Module, inputs: tuple[Any, ...]) -> None:
+            nonlocal non_contiguous_calls
+            hx = inputs[1]
+            if not (hx[0].is_contiguous() and hx[1].is_contiguous()):
+                non_contiguous_calls += 1
+
+        handle = model.decoder.rnn.register_forward_pre_hook(_check_hx_contiguous)
+        try:
+            res_cpu = beam_search_seq2seq(
+                model, src_ids, src_lengths, beam_size=4, length_penalty=0.6, max_len=8
+            )
+        finally:
+            handle.remove()
+
+        self.assertEqual(non_contiguous_calls, 0)
+        self.assertEqual(len(res_cpu.token_ids), 3)
+
+        if torch.cuda.is_available():
+            cuda_device = torch.device("cuda")
+            model_cuda = model.to(cuda_device)
+            res_cuda = beam_search_seq2seq(
+                model_cuda,
+                src_ids.to(cuda_device),
+                src_lengths.to(cuda_device),
+                beam_size=4,
+                length_penalty=0.6,
+                max_len=8,
+            )
+            self.assertEqual(len(res_cuda.token_ids), 3)
 
 
 def main() -> int:
