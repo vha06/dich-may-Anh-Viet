@@ -178,8 +178,8 @@ def beam_search_seq2seq(
                 enc_out_i = encoder_outputs[i : i + 1, :s_len_i, :]
                 src_mask_i = torch.ones((1, s_len_i), dtype=torch.bool, device=device)
 
-                h_active = h_enc[:, i : i + 1, :]
-                c_active = c_enc[:, i : i + 1, :]
+                h_active = h_enc[:, i : i + 1, :].contiguous()
+                c_active = c_enc[:, i : i + 1, :].contiguous()
                 input_tokens = torch.tensor(
                     [model.bos_id], dtype=torch.long, device=device
                 )
@@ -256,8 +256,8 @@ def beam_search_seq2seq(
                     beam_scores = torch.tensor(
                         next_scores, dtype=torch.float, device=device
                     )
-                    h_active = h_next.index_select(1, parent_tensor)
-                    c_active = c_next.index_select(1, parent_tensor)
+                    h_active = h_next.index_select(1, parent_tensor).contiguous()
+                    c_active = c_next.index_select(1, parent_tensor).contiguous()
                     beam_seqs = next_seqs
                     beam_attns = next_attns
 
