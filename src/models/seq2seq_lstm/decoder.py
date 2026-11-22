@@ -99,7 +99,9 @@ class LSTMDecoder(nn.Module):
             )
 
         embedded = self.dropout(self.embedding(token_ids))  # (B, 1, embed_dim)
-        rnn_output, next_hidden = self.rnn(embedded, hidden)  # (B, 1, hidden_dim)
+        rnn_output, next_hidden = self.rnn(
+            embedded, (h_prev.contiguous(), c_prev.contiguous())
+        )  # (B, 1, hidden_dim)
         dec_state = rnn_output.squeeze(1)  # (B, hidden_dim)
 
         if self.attention is not None:
