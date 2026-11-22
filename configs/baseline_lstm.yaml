@@ -1,0 +1,59 @@
+experiment:
+  name: baseline_lstm
+  seed: 42
+  output_dir: outputs/baseline_lstm
+  checkpoint_dir: checkpoints/baseline_lstm
+
+data:
+  processed_dir: data/processed
+  tokenizer_dir: data/tokenizer
+  tokenizer_type: bpe
+  max_len: 128
+  batch_size: 64
+  num_workers: 0
+
+model:
+  arch: seq2seq_lstm
+  src_vocab_size: 8000
+  tgt_vocab_size: 8000
+  embed_dim: 256
+  enc_hidden_dim: 256
+  dec_hidden_dim: 512
+  num_layers: 2
+  dropout: 0.3
+  bidirectional: true
+  attention_method: general
+  attn_dim: 256
+
+training:
+  epochs: 20
+  lr: 0.001
+  weight_decay: 0.0
+  grad_clip: 1.0
+  label_smoothing: 0.0
+  teacher_forcing_ratio: 1.0
+  scheduler_type: plateau
+  scheduler_params:
+    mode: min
+    factor: 0.5
+    patience: 2
+    min_lr: 0.000001
+  early_stopping_patience: 5
+  save_best_by: val_bleu
+  use_amp: true
+  amp_dtype: auto
+  eval_decode_strategy: greedy
+  eval_beam_size: 4
+  eval_length_penalty: 0.6
+  test_beam_size: 4
+  test_length_penalty: 0.6
+
+wandb:
+  enabled: true
+  entity: nikoteen-iai-uet
+  project: dich-may-Anh-Viet
+  tags:
+    - baseline
+    - seq2seq
+    - lstm
+    - luong-general
