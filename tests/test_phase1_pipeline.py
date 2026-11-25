@@ -160,6 +160,10 @@ def check_tokenizers(
             EOS_ID,
         ):
             raise AssertionError(f"Special token IDs khong khop chuan cho {name}.")
+        if tok.sos_id != BOS_ID:
+            raise AssertionError(
+                f"sos_id ({name})={tok.sos_id}, ky vong bang bos_id={BOS_ID}."
+            )
 
     sample_en = "This is not a finished story ."
     sample_vi = "Câu chuyện này chưa kết thúc ."
