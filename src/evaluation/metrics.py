@@ -24,7 +24,7 @@ def _normalize_line(text: str) -> str:
 
 def compute_corpus_bleu(
     predictions: Sequence[str],
-    references: Sequence[str],
+    references: Sequence[str] | Sequence[Sequence[str]],
     lowercase: bool = False,
     tokenize: str = DEFAULT_TOKENIZE,
     smooth_method: str = DEFAULT_SMOOTH_METHOD,
@@ -33,13 +33,20 @@ def compute_corpus_bleu(
     """Compute corpus-level SacreBLEU-4, n-gram precisions, brevity penalty, and signature."""
     if not predictions or not references:
         raise ValueError("Danh sach predictions va references khong duoc rong.")
-    if len(predictions) != len(references):
-        raise ValueError(
-            f"So luong cau khong khop: predictions={len(predictions)}, references={len(references)}"
-        )
 
-    hypotheses = [_normalize_line(p) for p in predictions]
-    refs = [_normalize_line(r) for r in references]
+    hypotheses = [_normalize_line(str(p)) for p in predictions]
+    if isinstance(references[0], str):
+        ref_streams = [[_normalize_line(str(r)) for r in references]]  # type: ignore[arg-type]
+    else:
+        ref_streams = [
+            [_normalize_line(str(r)) for r in stream] for stream in references
+        ]
+
+    if not ref_streams or any(len(stream) != len(hypotheses) for stream in ref_streams):
+        raise ValueError(
+            f"So luong cau khong khop: predictions={len(hypotheses)}, "
+            f"references={[len(stream) for stream in ref_streams]}"
+        )
 
     bleu_metric = BLEU(
         lowercase=lowercase,
@@ -47,7 +54,7 @@ def compute_corpus_bleu(
         smooth_method=smooth_method,
         force=force,
     )
-    score = bleu_metric.corpus_score(hypotheses, [refs])
+    score = bleu_metric.corpus_score(hypotheses, ref_streams)
     sig = str(bleu_metric.get_signature())
 
     return {
@@ -68,6 +75,9 @@ def compute_corpus_bleu(
         "smooth_method": smooth_method,
         "signature": sig,
     }
+
+
+compute_bleu = compute_corpus_bleu
 
 
 def compute_sentence_bleu(
