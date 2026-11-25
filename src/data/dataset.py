@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import argparse
 import json
+import random
 import sys
 from functools import partial
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any, Iterator, Sequence
 
 import torch
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import DataLoader, Dataset, Sampler
 
 from src.data.preprocess import _length_summary
 from src.data.tokenizer import (
@@ -56,8 +57,10 @@ class TranslationDataset(Dataset):
         self.pre_tokenize = pre_tokenize
         self.pad_id = src_tokenizer.pad_id
 
-        self.src_lines = self.src_path.read_text(encoding="utf-8").splitlines()
-        self.tgt_lines = self.tgt_path.read_text(encoding="utf-8").splitlines()
+        with self.src_path.open("r", encoding="utf-8") as f_src:
+            self.src_lines = [line.rstrip("\r\n") for line in f_src]
+        with self.tgt_path.open("r", encoding="utf-8") as f_tgt:
+            self.tgt_lines = [line.rstrip("\r\n") for line in f_tgt]
 
         if len(self.src_lines) != len(self.tgt_lines):
             raise ValueError(
@@ -104,6 +107,18 @@ class TranslationDataset(Dataset):
     def get_raw_pair(self, idx: int) -> tuple[str, str]:
         """Return original (src_text, tgt_text) pair at index idx for inspection/eval."""
         return self.src_lines[idx], self.tgt_lines[idx]
+
+    def get_lengths(self) -> list[int]:
+        """Return max(src_len, tgt_len) per sentence pair for length bucketing."""
+        if self._src_ids is not None and self._tgt_ids is not None:
+            return [
+                max(len(s), len(t))
+                for s, t in zip(self._src_ids, self._tgt_ids)
+            ]
+        return [
+            max(len(s.split()), len(t.split()))
+            for s, t in zip(self.src_lines, self.tgt_lines)
+        ]
 
 
 def collate_translation_batch(
@@ -162,6 +177,42 @@ def collate_translation_batch(
     }
 
 
+class BucketBatchSampler(Sampler[list[int]]):
+    """Group similar-length sentence pairs into batches to minimize dynamic padding."""
+
+    def __init__(
+        self,
+        lengths: Sequence[int],
+        batch_size: int,
+        shuffle: bool = True,
+        drop_last: bool = False,
+    ) -> None:
+        if batch_size < 1:
+            raise ValueError(f"batch_size phai >= 1, nhan duoc {batch_size}")
+        self.batch_size = batch_size
+        self.shuffle = shuffle
+        self.drop_last = drop_last
+
+        sorted_indices = sorted(range(len(lengths)), key=lambda i: lengths[i])
+        batches = [
+            sorted_indices[i : i + batch_size]
+            for i in range(0, len(sorted_indices), batch_size)
+        ]
+        if drop_last and batches and len(batches[-1]) < batch_size:
+            batches.pop()
+        self.batches = batches
+
+    def __iter__(self) -> Iterator[list[int]]:
+        batches = list(self.batches)
+        if self.shuffle:
+            random.shuffle(batches)
+        for batch in batches:
+            yield batch
+
+    def __len__(self) -> int:
+        return len(self.batches)
+
+
 def create_dataloader(
     dataset: TranslationDataset,
     batch_size: int = DEFAULT_BATCH_SIZE,
@@ -169,9 +220,25 @@ def create_dataloader(
     num_workers: int = 0,
     pin_memory: bool = False,
     drop_last: bool = False,
+    use_bucketing: bool = False,
 ) -> DataLoader:
     """Wrap TranslationDataset in a PyTorch DataLoader with dynamic batch padding."""
     collate_fn = partial(collate_translation_batch, pad_id=dataset.pad_id)
+    if use_bucketing:
+        sampler = BucketBatchSampler(
+            lengths=dataset.get_lengths(),
+            batch_size=batch_size,
+            shuffle=shuffle,
+            drop_last=drop_last,
+        )
+        return DataLoader(
+            dataset,
+            batch_sampler=sampler,
+            num_workers=num_workers,
+            pin_memory=pin_memory,
+            collate_fn=collate_fn,
+        )
+
     return DataLoader(
         dataset,
         batch_size=batch_size,
@@ -192,17 +259,18 @@ def build_dataloaders(
     pre_tokenize: bool = True,
     num_workers: int = 0,
     pin_memory: bool = False,
+    use_bucketing: bool = False,
 ) -> dict[str, DataLoader]:
-    """Construct train (shuffled) and val/test (deterministic) DataLoaders."""
+    """Construct train (shuffled, optional bucketing) and val/test (deterministic) DataLoaders."""
     proc_dir = Path(processed_dir)
     split_configs = (
-        ("train", True),
-        ("val", False),
-        ("test", False),
+        ("train", True, use_bucketing),
+        ("val", False, False),
+        ("test", False, False),
     )
 
     loaders: dict[str, DataLoader] = {}
-    for split_name, shuffle in split_configs:
+    for split_name, shuffle, split_bucketing in split_configs:
         dataset = TranslationDataset(
             src_path=proc_dir / f"{split_name}.en",
             tgt_path=proc_dir / f"{split_name}.vi",
@@ -217,6 +285,7 @@ def build_dataloaders(
             shuffle=shuffle,
             num_workers=num_workers,
             pin_memory=pin_memory,
+            use_bucketing=split_bucketing,
         )
     return loaders
 
@@ -299,10 +368,14 @@ def evaluate_dataloader_stats(
     src_static_total_cells = num_samples * static_max_len
     tgt_static_total_cells = num_samples * (static_max_len - 1)
 
+    resolved_batch_size = dataloader.batch_size
+    if resolved_batch_size is None and dataloader.batch_sampler is not None:
+        resolved_batch_size = getattr(dataloader.batch_sampler, "batch_size", None)
+
     return {
         "num_samples": num_samples,
         "num_batches": len(batch_s_max_list),
-        "batch_size": dataloader.batch_size,
+        "batch_size": resolved_batch_size,
         "batch_s_max": _length_summary(batch_s_max_list),
         "batch_t_max": _length_summary(batch_t_max_list),
         "src_real_tokens": src_real_tokens,
@@ -368,6 +441,11 @@ def parse_args() -> argparse.Namespace:
         default=42,
         help="Random seed co dinh thu tu shuffle tap train khi thong ke (mac dinh: 42)",
     )
+    parser.add_argument(
+        "--use-bucketing",
+        action="store_true",
+        help="Bat BucketBatchSampler gom nhom cau cung do dai tren tap train",
+    )
     return parser.parse_args()
 
 
@@ -376,6 +454,7 @@ def main() -> int:
         sys.stdout.reconfigure(encoding="utf-8")
 
     args = parse_args()
+    random.seed(args.seed)
     torch.manual_seed(args.seed)
 
     src_tok = load_tokenizer(args.tokenizer_dir / "bpe_en.json", tokenizer_type="bpe")
@@ -389,6 +468,7 @@ def main() -> int:
         batch_size=args.batch_size,
         max_len=args.max_len,
         pre_tokenize=True,
+        use_bucketing=args.use_bucketing,
     )
 
     sample_batch = next(iter(loaders["val"]))
@@ -425,6 +505,7 @@ def main() -> int:
             "bos_id": BOS_ID,
             "eos_id": EOS_ID,
             "pre_tokenize": True,
+            "use_bucketing": args.use_bucketing,
         },
         "sample_inspection": sample_inspection,
         "splits": {},
