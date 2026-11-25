@@ -5,14 +5,14 @@ from __future__ import annotations
 import torch
 from torch import Tensor
 
-from src.data.tokenizer import BPETokenizer
+from src.data.tokenizer import BaseTokenizer
 
 
 @torch.no_grad()
 def greedy_decode(
     model,
     src: Tensor,
-    tokenizer: BPETokenizer,
+    tokenizer: BaseTokenizer,
     max_len: int = 100,
     device: torch.device | None = None,
 ) -> tuple[list[str], Tensor]:
@@ -47,7 +47,7 @@ def greedy_decode(
 def beam_search_decode(
     model,
     src: Tensor,
-    tokenizer: BPETokenizer,
+    tokenizer: BaseTokenizer,
     beam_width: int = 5,
     max_len: int = 100,
     device: torch.device | None = None,

@@ -11,7 +11,7 @@ from torch.optim import Optimizer
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-from src.data.tokenizer import BPETokenizer
+from src.data.tokenizer import BaseTokenizer
 from src.evaluation.metrics import compute_bleu
 
 
@@ -23,7 +23,7 @@ class Trainer:
         model: nn.Module,
         optimizer: Optimizer,
         criterion: nn.Module,
-        tokenizer: BPETokenizer,
+        tokenizer: BaseTokenizer,
         device: torch.device,
         scheduler=None,
         grad_clip: float = 1.0,

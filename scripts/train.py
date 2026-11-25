@@ -6,13 +6,12 @@ import argparse
 import sys
 from pathlib import Path
 
-# Thêm thư mục gốc dự án vào sys.path để luôn tìm thấy module 'src'
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import torch
 import yaml
 
-from src.data.tokenizer import BPETokenizer
+from src.data.tokenizer import create_tokenizer
 from src.data.dataset import build_dataloader
 from src.models.seq2seq_lstm import Encoder, Decoder, Seq2Seq
 from src.training.losses import LabelSmoothedCrossEntropy
@@ -25,10 +24,16 @@ def load_config(path: str) -> dict:
         return yaml.safe_load(f)
 
 
-def build_model(cfg: dict, pad_id: int, device: torch.device) -> Seq2Seq:
+def build_model(
+    cfg: dict,
+    src_vocab_size: int,
+    tgt_vocab_size: int,
+    pad_id: int,
+    device: torch.device,
+) -> Seq2Seq:
     m = cfg["model"]
     encoder = Encoder(
-        vocab_size=m["vocab_size"],
+        vocab_size=src_vocab_size,
         embed_dim=m["embed_dim"],
         hidden_dim=m["hidden_dim"],
         num_layers=m["num_layers"],
@@ -36,7 +41,7 @@ def build_model(cfg: dict, pad_id: int, device: torch.device) -> Seq2Seq:
         pad_id=pad_id,
     )
     decoder = Decoder(
-        vocab_size=m["vocab_size"],
+        vocab_size=tgt_vocab_size,
         embed_dim=m["embed_dim"],
         encoder_dim=m["hidden_dim"] * 2,
         hidden_dim=m["hidden_dim"],
@@ -64,12 +69,19 @@ def main() -> None:
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Device: {device}")
 
-    tokenizer = BPETokenizer(cfg["data"]["tokenizer_model"])
+    tok_dir = Path(cfg["data"]["tokenizer_dir"])
+    tok_type = cfg["data"].get("tokenizer_type", "bpe")
+    ext = "json" if tok_type == "bpe" else "model"
+    prefix = "bpe" if tok_type == "bpe" else "spm"
+
+    src_tokenizer = create_tokenizer(tok_dir / f"{prefix}_en.{ext}", tokenizer_type=tok_type)
+    tgt_tokenizer = create_tokenizer(tok_dir / f"{prefix}_vi.{ext}", tokenizer_type=tok_type)
 
     train_loader = build_dataloader(
         en_path=cfg["data"]["train_en"],
         vi_path=cfg["data"]["train_vi"],
-        tokenizer=tokenizer,
+        src_tokenizer=src_tokenizer,
+        tgt_tokenizer=tgt_tokenizer,
         batch_size=cfg["training"]["batch_size"],
         shuffle=True,
         max_len=cfg["data"]["max_len"],
@@ -77,13 +89,20 @@ def main() -> None:
     val_loader = build_dataloader(
         en_path=cfg["data"]["val_en"],
         vi_path=cfg["data"]["val_vi"],
-        tokenizer=tokenizer,
+        src_tokenizer=src_tokenizer,
+        tgt_tokenizer=tgt_tokenizer,
         batch_size=cfg["training"]["batch_size"],
         shuffle=False,
         max_len=cfg["data"]["max_len"],
     )
 
-    model = build_model(cfg, pad_id=tokenizer.pad_id, device=device)
+    model = build_model(
+        cfg,
+        src_vocab_size=src_tokenizer.vocab_size,
+        tgt_vocab_size=tgt_tokenizer.vocab_size,
+        pad_id=src_tokenizer.pad_id,
+        device=device,
+    )
     optimizer = torch.optim.Adam(model.parameters(), lr=cfg["training"]["learning_rate"])
 
     scheduler = build_scheduler(
@@ -95,7 +114,7 @@ def main() -> None:
     )
 
     criterion = LabelSmoothedCrossEntropy(
-        pad_id=tokenizer.pad_id,
+        pad_id=tgt_tokenizer.pad_id,
         smoothing=cfg["training"]["label_smoothing"],
     )
 
@@ -103,7 +122,7 @@ def main() -> None:
         model=model,
         optimizer=optimizer,
         criterion=criterion,
-        tokenizer=tokenizer,
+        tokenizer=tgt_tokenizer,
         device=device,
         scheduler=scheduler,
         grad_clip=cfg["training"]["grad_clip"],

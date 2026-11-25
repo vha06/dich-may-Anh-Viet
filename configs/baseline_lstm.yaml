@@ -1,7 +1,8 @@
 # Cấu hình siêu tham số cho mô hình Seq2Seq LSTM + Bahdanau Attention
 
 model:
-  vocab_size: 8000
+  src_vocab_size: 8000
+  tgt_vocab_size: 8000
   embed_dim: 256
   hidden_dim: 512
   attention_dim: 256
@@ -21,14 +22,15 @@ training:
   min_lr: 0.000001
 
 data:
-  tokenizer_model: data/tokenizer/bpe.model
+  tokenizer_dir: data/tokenizer
+  tokenizer_type: bpe
   train_en: data/processed/train.en
   train_vi: data/processed/train.vi
   val_en: data/processed/val.en
   val_vi: data/processed/val.vi
   test_en: data/processed/test.en
   test_vi: data/processed/test.vi
-  max_len: 100
+  max_len: 128
 
 checkpoint:
   dir: checkpoints
