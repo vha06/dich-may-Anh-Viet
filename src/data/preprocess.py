@@ -126,7 +126,7 @@ def process_split(
                 continue
 
             len_s, len_t = len(clean_s.split()), len(clean_t.split())
-            if max_words is not None and (len_s > max_words or len_t > max_words):
+            if max_words is not None and max_words > 0 and (len_s > max_words or len_t > max_words):
                 dropped_too_long += 1
                 continue
 
@@ -222,13 +222,18 @@ def parse_args() -> argparse.Namespace:
         dest="max_words",
         type=int,
         default=128,
-        help="Ngưỡng độ dài từ tối đa cho câu ở tập train (mặc định: 128 từ)",
+        help="Ngưỡng độ dài từ tối đa cho câu ở tập train; truyền <= 0 hoặc --no-max-words để tắt (mặc định: 128)",
     )
     parser.add_argument(
         "--max-len",
         dest="max_words",
         type=int,
         help="Alias cho --max-words",
+    )
+    parser.add_argument(
+        "--no-max-words",
+        action="store_true",
+        help="Tắt lọc độ dài câu tối đa ở tập train",
     )
     parser.add_argument(
         "--keep-duplicates",
@@ -245,6 +250,9 @@ def main() -> int:
     args = parse_args()
     raw_dir: Path = args.raw_dir
     processed_dir: Path = args.processed_dir
+    max_words: int | None = (
+        None if (args.no_max_words or args.max_words is None or args.max_words <= 0) else args.max_words
+    )
 
     split_specs = [
         ("train", "train.en", "train.vi", "train.en", "train.vi", True),
@@ -265,7 +273,7 @@ def main() -> int:
             out_src_path=processed_dir / out_en,
             out_tgt_path=processed_dir / out_vi,
             is_train=is_train,
-            max_words=args.max_words,
+            max_words=max_words,
             remove_duplicates=not args.keep_duplicates,
         )
         split_pairs[split_name] = res.pop("pairs")
@@ -279,7 +287,7 @@ def main() -> int:
     overlap = verify_split_separation(split_pairs, split_srcs, split_tgts)
     report = {
         "config": {
-            "max_words": args.max_words,
+            "max_words": max_words,
             "remove_duplicates": not args.keep_duplicates,
         },
         "splits": all_stats,
@@ -299,9 +307,10 @@ def main() -> int:
             f"\n[{name.upper()}] Gốc: {s['raw_num_sentences']:,} -> Sau xử lý: {s['num_sentences']:,} cặp câu"
         )
         if name == "train":
+            max_label = f"> {max_words} từ" if max_words is not None else "tắt"
             print(
                 f"  Đã lọc bỏ -> rỗng: {drop['empty']}, trùng lặp: {drop['duplicate']}, "
-                f"quá dài (> {args.max_words} từ): {drop['too_long']}"
+                f"quá dài ({max_label}): {drop['too_long']}"
             )
         print(
             f"  Độ dài EN (từ): mean={en_s['mean']}, median={en_s['median']}, "
