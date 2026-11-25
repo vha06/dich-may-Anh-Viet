@@ -199,6 +199,7 @@ def main() -> int:
         pre_tokenize=True,
         num_workers=int(data_cfg.get("num_workers", 0)),
         pin_memory=pin_memory,
+        use_bucketing=bool(data_cfg.get("use_bucketing", False)),
     )
 
     model = build_model_from_config(cfg)
