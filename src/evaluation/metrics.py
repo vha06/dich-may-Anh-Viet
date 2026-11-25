@@ -4,10 +4,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Any
 
-try:
-    import sacrebleu
-except ImportError:
-    sacrebleu = None  # type: ignore[assignment]
+import sacrebleu
 
 
 def compute_bleu(
@@ -24,17 +21,14 @@ def compute_bleu(
         tokenize: Bộ tách token của SacreBLEU (mặc định: "13a").
         lowercase: Có chuyển về chữ thường trước khi chấm điểm hay không.
     """
-    if sacrebleu is None:
-        raise ImportError("Thiếu thư viện 'sacrebleu'. Cài đặt bằng: pip install sacrebleu")
-
     hyps = list(hypotheses)
     if not hyps:
         raise ValueError("Danh sách hypotheses không được rỗng.")
 
     if references and isinstance(references[0], str):
-        ref_streams = [list(references)]  # type: ignore[arg-type]
+        ref_streams: list[list[str]] = [[str(x) for x in references]]
     else:
-        ref_streams = [list(r) for r in references]  # type: ignore[union-attr]
+        ref_streams = [[str(x) for x in r] for r in references]
 
     if not ref_streams or any(len(r) != len(hyps) for r in ref_streams):
         raise ValueError(
@@ -42,7 +36,7 @@ def compute_bleu(
             f"({[len(r) for r in ref_streams]})."
         )
 
-    metric = sacrebleu.BLEU(tokenize=tokenize, lowercase=lowercase)
+    metric = sacrebleu.BLEU(tokenize=tokenize, lowercase=lowercase, force=True)
     bleu = metric.corpus_score(hyps, ref_streams)
     return {
         "bleu": round(float(bleu.score), 2),
@@ -57,10 +51,7 @@ def compute_bleu(
 if __name__ == "__main__":
     sample_hyps = ["Tôi thích học dịch máy .", "Hôm nay trời đẹp ."]
     sample_refs = ["Tôi thích học dịch máy .", "Hôm nay trời rất đẹp ."]
-    if sacrebleu is not None:
-        res = compute_bleu(sample_hyps, sample_refs)
-        assert 0.0 <= res["bleu"] <= 100.0
-        assert compute_bleu(sample_hyps, sample_hyps)["bleu"] == 100.0
-        print("OK:", res)
-    else:
-        print("Bỏ qua self-check vì chưa cài sacrebleu.")
+    res = compute_bleu(sample_hyps, sample_refs)
+    assert 0.0 <= res["bleu"] <= 100.0
+    assert compute_bleu(sample_hyps, sample_hyps)["bleu"] == 100.0
+    print("OK:", res)
