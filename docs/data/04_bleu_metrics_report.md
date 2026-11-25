@@ -7,7 +7,7 @@
 
 ## 1. Chuẩn hóa Đánh giá bằng `sacrebleu` (Post, 2018)
 
-Thay vì tự cài đặt BLEU thủ công hoặc dùng hàm tách token tự do dễ gây lệch điểm số (1–3 điểm BLEU giữa các nghiên cứu), dự án sử dụng thư viện chuẩn **`sacrebleu` (phiên bản `2.6.0`)**. Mọi kết quả đánh giá đều gắn kèm **Chữ ký tái lập (`signature`)** chuẩn quốc tế để đưa trực tiếp vào báo cáo LaTeX:
+Thay vì tự cài đặt BLEU thủ công hoặc dùng hàm tách token tự do dễ gây lệch điểm số (1–3 điểm BLEU giữa các nghiên cứu), dự án sử dụng và khóa cứng thư viện chuẩn **`sacrebleu==2.6.0`** trong [`requirements.txt`](../../requirements.txt) để chữ ký đánh giá đồng nhất tuyệt đối trên mọi máy thành viên. Mọi kết quả đánh giá đều gắn kèm **Chữ ký tái lập (`signature`)** chuẩn quốc tế để đưa trực tiếp vào báo cáo LaTeX:
 - Cấu hình mặc định toàn dự án: `nrefs:1|case:mixed|eff:no|tok:13a|smooth:exp|version:2.6.0`
 - Thiết lập `force=True` cho `BLEU`: Vì dữ liệu IWSLT'15 đã được tách sẵn khoảng trắng trước dấu câu (ví dụ `" ."`), cả câu dự đoán (sinh ra từ BPE) lẫn câu gốc (`val.vi`/`test.vi`) đều dùng chung quy ước tiền xử lý này; tham số `force=True` giữ nguyên điểm số và chữ ký chuẩn `tok:13a` đồng thời tắt cảnh báo lặp lại trong log huấn luyện.
 
@@ -29,7 +29,7 @@ $$\text{BLEU} = \text{BP} \times \exp\!\left(\frac{1}{4}\sum_{n=1}^{4} \ln p_n\r
 
 | Hàm | Đầu vào (Input) | Vai trò & Ngữ cảnh sử dụng |
 | :--- | :--- | :--- |
-| **`compute_corpus_bleu`** | Danh sách chuỗi dự đoán & bản gốc (`Sequence[str]`) | Tính **1 điểm Corpus BLEU-4 duy nhất** kèm `precisions` `[p1..p4]`, `bp`, `length_ratio` và `signature` cho toàn bộ tập `val`/`test`. |
+| **`compute_corpus_bleu`** *(alias: `compute_bleu`)* | Danh sách chuỗi dự đoán & bản gốc đơn hoặc đa tham chiếu (`Sequence[str] \| Sequence[Sequence[str]]`) | Tính **1 điểm Corpus BLEU-4 duy nhất** kèm `precisions` `[p1..p4]`, `brevity_penalty`, `length_ratio`, `sys_len`, `ref_len` và `signature` cho toàn bộ tập `val`/`test` (được export thống nhất qua `src/evaluation/__init__.py`). |
 | **`compute_sentence_bleu`** | 1 câu dự đoán & 1 câu gốc (`str`) | Tính BLEU từng câu (bật `effective_order=True`, `smooth_method="exp"`), phục vụ **Phân tích lỗi Tuần 5** và **App Demo Tuần 6**. |
 | **`decode_and_compute_bleu`** | Tensor/danh sách Token IDs từ mô hình + câu gốc (`val.vi`/`test.vi`) | Gọi `tgt_tokenizer.decode(..., skip_special_tokens=True)` (tự động dừng tại `<eos>` đầu tiên, bỏ `<bos>`/`<pad>`) rồi gọi `compute_corpus_bleu` so sánh với **văn bản gốc chuẩn trên đĩa** (*Gold Reference*). |
 
