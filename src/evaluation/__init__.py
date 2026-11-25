@@ -11,6 +11,7 @@ from src.evaluation.decode import (
 from src.evaluation.metrics import (
     DEFAULT_SMOOTH_METHOD,
     DEFAULT_TOKENIZE,
+    compute_bleu,
     compute_corpus_bleu,
     compute_sentence_bleu,
     decode_and_compute_bleu,
@@ -23,6 +24,7 @@ __all__ = [
     "DEFAULT_TOKENIZE",
     "DecodeResult",
     "beam_search_seq2seq",
+    "compute_bleu",
     "compute_corpus_bleu",
     "compute_sentence_bleu",
     "decode_and_compute_bleu",
