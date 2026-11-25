@@ -37,8 +37,8 @@ Bên cạnh chất lượng dịch thuật, mô hình yêu cầu trích xuất m
 \section{Dữ liệu & Tiền xử lý (Data Pipeline)}
 Dự án sử dụng bộ dữ liệu chuẩn quốc tế \textbf{IWSLT'15 English--Vietnamese} \cite{luong2015effective} gồm $\approx 133,317$ cặp câu song ngữ từ các bài diễn thuyết TED Talks.
 \begin{itemize}
-    \item \textbf{Phân chia tập dữ liệu:} Tập Train (132,418 câu sau khi lọc), tập Validation (\texttt{tst2012}, 1,550 câu) và tập Test (\texttt{tst2013}, 1,262 câu).
-    \item \textbf{Tiền xử lý:} Chuẩn hóa Unicode NFC, chuyển chữ thường (lowercasing), lọc bỏ ký tự đặc biệt và giới hạn độ dài câu trong khoảng $[1, 100]$ từ để kiểm soát bộ nhớ GPU.
+    \item \textbf{Phân chia tập dữ liệu:} Tập Train (131,942 câu sau khi lọc), tập Validation (\texttt{tst2012}, 1,553 câu) và tập Test (\texttt{tst2013}, 1,268 câu).
+    \item \textbf{Tiền xử lý:} Giải mã HTML entities, chuẩn hóa Unicode NFC (giữ nguyên chữ hoa/thường), lọc bỏ ký tự điều khiển ẩn, lọc câu rỗng, khử trùng lặp và giới hạn tối đa $128$ từ riêng trên tập huấn luyện; bảo toàn $100\%$ tập Validation và Test.
     \item \textbf{Bộ tách từ Subword:} Áp dụng thuật toán Byte Pair Encoding (BPE) \cite{sennrich2016neural} dùng chung (Joint Vocabulary) cho cả hai ngôn ngữ với kích thước từ vựng $V = 8,000$ tokens, hạn chế triệt để hiện tượng từ ngoài từ điển (Out-Of-Vocabulary -- OOV).
 \end{itemize}
 
