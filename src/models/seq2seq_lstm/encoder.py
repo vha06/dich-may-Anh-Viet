@@ -1,17 +1,18 @@
-"""Encoder: Bi-LSTM đọc câu nguồn và tạo biểu diễn ẩn."""
+"""Encoder: Bi-LSTM đọc câu nguồn (kèm pack_padded_sequence bỏ qua <pad>)."""
 
 from __future__ import annotations
 
 import torch
 import torch.nn as nn
 from torch import Tensor
+from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
 
 
 class Encoder(nn.Module):
     """Bi-directional LSTM Encoder.
 
-    Đầu vào: chuỗi token ID nguồn  →  Đầu ra: trạng thái ẩn của mỗi bước thời gian
-    cùng (hidden, cell) cuối cùng đã biến đổi để khớp kích thước Decoder.
+    Đầu vào: chuỗi token ID nguồn (+ src_lengths thực tế để bỏ qua <pad>).
+    Đầu ra: encoder_outputs [batch, seq_len, hidden*2], (hidden, cell).
     """
 
     def __init__(
@@ -40,19 +41,34 @@ class Encoder(nn.Module):
         self.fc_cell = nn.Linear(hidden_dim * 2, hidden_dim)
         self.dropout = nn.Dropout(dropout)
 
-    def forward(self, src: Tensor) -> tuple[Tensor, tuple[Tensor, Tensor]]:
+    def forward(
+        self,
+        src: Tensor,
+        src_lengths: Tensor | None = None,
+    ) -> tuple[Tensor, tuple[Tensor, Tensor]]:
         """
         Args:
-            src: [batch, src_len]  —  chuỗi token ID câu nguồn.
-
-        Returns:
-            encoder_outputs: [batch, src_len, hidden*2]
-            (hidden, cell): mỗi tensor [num_layers, batch, hidden]
+            src:         [batch, src_len]
+            src_lengths: [batch] — độ dài thực (không tính <pad>).
         """
         embedded = self.dropout(self.embedding(src))
-        outputs, (hidden, cell) = self.rnn(embedded)
 
-        # hidden: [num_layers*2, batch, hidden] → gộp 2 chiều lại
+        if src_lengths is not None:
+            packed = pack_padded_sequence(
+                embedded,
+                src_lengths.cpu(),
+                batch_first=True,
+                enforce_sorted=False,
+            )
+            packed_outputs, (hidden, cell) = self.rnn(packed)
+            outputs, _ = pad_packed_sequence(
+                packed_outputs,
+                batch_first=True,
+                total_length=src.size(1),
+            )
+        else:
+            outputs, (hidden, cell) = self.rnn(embedded)
+
         hidden = hidden.view(self.num_layers, 2, -1, self.hidden_dim)
         hidden = torch.cat([hidden[:, 0], hidden[:, 1]], dim=-1)
         hidden = torch.tanh(self.fc_hidden(hidden))

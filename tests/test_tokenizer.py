@@ -1,12 +1,20 @@
-"""Unit tests cho Tokenizer (HF BPE & SentencePiece) và Dataset 2 Tokenizer."""
+"""Unit tests cho Tokenizer (HF BPE & SentencePiece) và Dataset/DataLoader chuẩn nhóm."""
 
+import functools
+import pickle
 import tempfile
 import unittest
 from pathlib import Path
 
 import torch
 
-from src.data.dataset import build_dataloader
+from src.data.dataset import (
+    TranslationDataset,
+    _verify_batch_invariants,
+    build_dataloaders,
+    collate_translation_batch,
+    create_dataloader,
+)
 from src.data.tokenizer import (
     BOS_ID,
     EOS_ID,
@@ -43,7 +51,6 @@ class TestTokenizerAndDataset(unittest.TestCase):
             tokens = tok.encode_tokens("Hello world .", add_special_tokens=False)
             self.assertTrue(any(t.endswith("</w>") for t in tokens))
 
-            # Kiểm tra decode nhận Tensor 1D và dừng ngay tại EOS đầu tiên
             hello_ids = tok.encode("Hello", add_special_tokens=False)
             world_ids = tok.encode("world", add_special_tokens=False)
             tensor_ids = torch.tensor([BOS_ID, *hello_ids, EOS_ID, *world_ids, PAD_ID])
@@ -66,25 +73,54 @@ class TestTokenizerAndDataset(unittest.TestCase):
             seq = [BOS_ID, *a_ids, EOS_ID, *b_ids]
             self.assertEqual(tok.decode(seq), "Xin chào")
 
-    def test_dataset_with_separate_tokenizers(self):
+    def test_dataset_batch_contract_bucketing_and_pickle(self):
         with tempfile.TemporaryDirectory() as tmp:
             tmp_dir = Path(tmp)
-            en_file = tmp_dir / "train.en"
-            vi_file = tmp_dir / "train.vi"
-            en_file.write_text("Hello world .\nGood morning .\n" * 3, encoding="utf-8")
-            vi_file.write_text("Xin chào .\nChào buổi sáng .\n" * 3, encoding="utf-8")
+            for split in ("train", "val", "test"):
+                (tmp_dir / f"{split}.en").write_text(
+                    "Hello world .\nGood morning everyone today .\nYes .\n" * 2,
+                    encoding="utf-8",
+                )
+                (tmp_dir / f"{split}.vi").write_text(
+                    "Xin chào .\nChào buổi sáng mọi người hôm nay .\nVâng .\n" * 2,
+                    encoding="utf-8",
+                )
 
-            src_tok = BPETokenizer.train([en_file], tmp_dir / "bpe_en.json", vocab_size=60, min_frequency=1)
-            tgt_tok = BPETokenizer.train([vi_file], tmp_dir / "bpe_vi.json", vocab_size=60, min_frequency=1)
-
-            loader = build_dataloader(
-                en_file, vi_file, src_tokenizer=src_tok, tgt_tokenizer=tgt_tok, batch_size=2, shuffle=False
+            src_tok = BPETokenizer.train(
+                [tmp_dir / "train.en"], tmp_dir / "bpe_en.json", vocab_size=80, min_frequency=1
             )
-            src_batch, tgt_batch = next(iter(loader))
-            self.assertEqual(src_batch.shape[0], 2)
-            self.assertEqual(tgt_batch.shape[0], 2)
-            self.assertEqual(src_batch[0, 0].item(), BOS_ID)
-            self.assertEqual(tgt_batch[0, 0].item(), BOS_ID)
+            tgt_tok = BPETokenizer.train(
+                [tmp_dir / "train.vi"], tmp_dir / "bpe_vi.json", vocab_size=80, min_frequency=1
+            )
+
+            # Kiểm tra get_raw_pair
+            ds = TranslationDataset(
+                tmp_dir / "train.en", tmp_dir / "train.vi", src_tok, tgt_tok, max_len=128
+            )
+            self.assertEqual(ds.get_raw_pair(0), ("Hello world .", "Xin chào ."))
+
+            # Kiểm tra collate_fn cấp module có thể pickle trên Windows
+            fn = functools.partial(collate_translation_batch, pad_id=PAD_ID)
+            self.assertIsNotNone(pickle.dumps(fn))
+
+            # Kiểm tra build_dataloaders (gồm cả bucketing trên train, khóa cứng val/test)
+            loaders = build_dataloaders(
+                tmp_dir, src_tok, tgt_tok, batch_size=2, max_len=128, use_bucketing=True
+            )
+            self.assertEqual(set(loaders.keys()), {"train", "val", "test"})
+
+            for split, loader in loaders.items():
+                batch = next(iter(loader))
+                _verify_batch_invariants(batch, BOS_ID, EOS_ID, PAD_ID)
+                self.assertEqual(batch["src_ids"].shape[0], 2)
+
+            # Kiểm tra val giữ nguyên thứ tự gốc 1-1
+            val_loader = create_dataloader(
+                tmp_dir / "val.en", tmp_dir / "val.vi", src_tok, tgt_tok, batch_size=3, shuffle=False
+            )
+            val_batch = next(iter(val_loader))
+            self.assertEqual(src_tok.decode(val_batch["src_ids"][0]), "Hello world .")
+            self.assertEqual(tgt_tok.decode(val_batch["tgt_output_ids"][0]), "Xin chào .")
 
 
 if __name__ == "__main__":

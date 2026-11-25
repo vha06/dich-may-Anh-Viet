@@ -18,7 +18,10 @@ class TestEncoder(unittest.TestCase):
 
     def test_output_shape(self):
         src = torch.randint(1, 100, (self.batch_size, self.src_len))
-        outputs, (hidden, cell) = self.encoder(src)
+        src_lengths = torch.tensor([10, 8, 6, 4])
+        for i, l in enumerate(src_lengths):
+            src[i, l:] = 0
+        outputs, (hidden, cell) = self.encoder(src, src_lengths=src_lengths)
         self.assertEqual(outputs.shape, (4, 10, 128))
         self.assertEqual(hidden.shape, (2, 4, 64))
         self.assertEqual(cell.shape, (2, 4, 64))
@@ -56,10 +59,13 @@ class TestSeq2Seq(unittest.TestCase):
 
     def test_forward_shape(self):
         src = torch.randint(1, 100, (3, 8))
-        tgt = torch.randint(1, 100, (3, 6))
-        outputs, attn = self.model(src, tgt, teacher_forcing_ratio=1.0)
-        self.assertEqual(outputs.shape, (3, 5, 100))
-        self.assertEqual(attn.shape, (3, 5, 8))
+        src_lengths = torch.tensor([8, 6, 5])
+        tgt_input = torch.randint(1, 100, (3, 6))
+        outputs, attn = self.model(
+            src, tgt_input, src_lengths=src_lengths, teacher_forcing_ratio=1.0
+        )
+        self.assertEqual(outputs.shape, (3, 6, 100))
+        self.assertEqual(attn.shape, (3, 6, 8))
 
     def test_translate_shape(self):
         src = torch.randint(1, 100, (2, 8))

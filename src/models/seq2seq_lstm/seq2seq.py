@@ -8,15 +8,14 @@ import torch
 import torch.nn as nn
 from torch import Tensor
 
-from src.models.seq2seq_lstm.encoder import Encoder
 from src.models.seq2seq_lstm.decoder import Decoder
+from src.models.seq2seq_lstm.encoder import Encoder
 
 
 class Seq2Seq(nn.Module):
     """Mô hình Seq2Seq LSTM + Bahdanau Attention.
 
-    Hỗ trợ teacher forcing khi huấn luyện
-    và greedy decoding khi suy luận.
+    Hỗ trợ teacher forcing khi huấn luyện và greedy decoding khi suy luận.
     """
 
     def __init__(self, encoder: Encoder, decoder: Decoder, pad_id: int = 0) -> None:
@@ -32,42 +31,45 @@ class Seq2Seq(nn.Module):
     def forward(
         self,
         src: Tensor,
-        tgt: Tensor,
+        tgt_input: Tensor,
+        src_lengths: Tensor | None = None,
         teacher_forcing_ratio: float = 0.5,
     ) -> tuple[Tensor, Tensor]:
         """
         Args:
-            src: [batch, src_len]
-            tgt: [batch, tgt_len]
-            teacher_forcing_ratio: xác suất dùng token thật thay vì token dự đoán.
+            src:         [batch, src_len]
+            tgt_input:   [batch, tgt_len] — bắt đầu bằng <bos>, đã dịch lệch sẵn.
+            src_lengths: [batch]
+            teacher_forcing_ratio: xác suất dùng token thật làm đầu vào bước tiếp theo.
 
         Returns:
-            outputs:         [batch, tgt_len - 1, vocab_size]
-            attention_maps:  [batch, tgt_len - 1, src_len]
+            outputs:        [batch, tgt_len, vocab_size] (khớp 1-1 với tgt_output_ids)
+            attention_maps: [batch, tgt_len, src_len]
         """
         batch_size = src.size(0)
-        tgt_len = tgt.size(1)
+        tgt_len = tgt_input.size(1)
         vocab_size = self.decoder.vocab_size
 
-        outputs = torch.zeros(batch_size, tgt_len - 1, vocab_size, device=src.device)
+        outputs = torch.zeros(batch_size, tgt_len, vocab_size, device=src.device)
         attentions = []
 
         mask = self.create_src_mask(src)
-        encoder_outputs, (hidden, cell) = self.encoder(src)
+        encoder_outputs, (hidden, cell) = self.encoder(src, src_lengths=src_lengths)
 
-        current_token = tgt[:, 0]
+        current_token = tgt_input[:, 0]
 
-        for t in range(1, tgt_len):
+        for t in range(tgt_len):
             prediction, hidden, cell, attn_w = self.decoder(
                 current_token, hidden, cell, encoder_outputs, mask
             )
-            outputs[:, t - 1] = prediction
+            outputs[:, t] = prediction
             attentions.append(attn_w)
 
-            if random.random() < teacher_forcing_ratio:
-                current_token = tgt[:, t]
-            else:
-                current_token = prediction.argmax(dim=-1)
+            if t + 1 < tgt_len:
+                if random.random() < teacher_forcing_ratio:
+                    current_token = tgt_input[:, t + 1]
+                else:
+                    current_token = prediction.argmax(dim=-1)
 
         attention_maps = torch.stack(attentions, dim=1)
         return outputs, attention_maps
@@ -78,17 +80,13 @@ class Seq2Seq(nn.Module):
         src: Tensor,
         bos_id: int,
         eos_id: int,
-        max_len: int = 100,
+        max_len: int = 128,
+        src_lengths: Tensor | None = None,
     ) -> tuple[Tensor, Tensor]:
-        """Greedy decoding cho suy luận.
-
-        Returns:
-            tokens:          [batch, generated_len]
-            attention_maps:  [batch, generated_len, src_len]
-        """
+        """Greedy decoding cho suy luận."""
         self.eval()
         mask = self.create_src_mask(src)
-        encoder_outputs, (hidden, cell) = self.encoder(src)
+        encoder_outputs, (hidden, cell) = self.encoder(src, src_lengths=src_lengths)
 
         batch_size = src.size(0)
         current_token = torch.full(

@@ -48,12 +48,21 @@ class Trainer:
         total_loss = 0.0
         pbar = tqdm(dataloader, desc="Training", leave=False)
 
-        for src, tgt in pbar:
-            src, tgt = src.to(self.device), tgt.to(self.device)
+        for batch in pbar:
+            src = batch["src_ids"].to(self.device)
+            src_lengths = batch["src_lengths"].to(self.device)
+            tgt_in = batch["tgt_input_ids"].to(self.device)
+            tgt_out = batch["tgt_output_ids"].to(self.device)
+
             self.optimizer.zero_grad()
 
-            outputs, _ = self.model(src, tgt, self.teacher_forcing_ratio)
-            loss = self.criterion(outputs, tgt[:, 1:])
+            outputs, _ = self.model(
+                src,
+                tgt_in,
+                src_lengths=src_lengths,
+                teacher_forcing_ratio=self.teacher_forcing_ratio,
+            )
+            loss = self.criterion(outputs, tgt_out)
 
             loss.backward()
             nn.utils.clip_grad_norm_(self.model.parameters(), self.grad_clip)
@@ -72,17 +81,25 @@ class Trainer:
         all_predictions: list[str] = []
         all_references: list[str] = []
 
-        for src, tgt in dataloader:
-            src, tgt = src.to(self.device), tgt.to(self.device)
+        for batch in dataloader:
+            src = batch["src_ids"].to(self.device)
+            src_lengths = batch["src_lengths"].to(self.device)
+            tgt_in = batch["tgt_input_ids"].to(self.device)
+            tgt_out = batch["tgt_output_ids"].to(self.device)
 
-            outputs, _ = self.model(src, tgt, teacher_forcing_ratio=0.0)
-            loss = self.criterion(outputs, tgt[:, 1:])
+            outputs, _ = self.model(
+                src,
+                tgt_in,
+                src_lengths=src_lengths,
+                teacher_forcing_ratio=0.0,
+            )
+            loss = self.criterion(outputs, tgt_out)
             total_loss += loss.item()
 
             pred_ids = outputs.argmax(dim=-1)
             for i in range(src.size(0)):
-                pred_text = self.tokenizer.decode(pred_ids[i].cpu().tolist())
-                ref_text = self.tokenizer.decode(tgt[i, 1:].cpu().tolist())
+                pred_text = self.tokenizer.decode(pred_ids[i])
+                ref_text = self.tokenizer.decode(tgt_out[i])
                 all_predictions.append(pred_text)
                 all_references.append(ref_text)
 
