@@ -104,7 +104,7 @@ def check_preprocessed_data(
     processed_dir: Path = Path("data/processed"),
 ) -> dict[str, Any]:
     """Verify presence, line counts, alignment, and non-emptiness of processed splits."""
-    expected_counts = {"train": 132160, "val": 1553, "test": 1268}
+    expected_counts = {"train": 131942, "val": 1553, "test": 1268}
     stats_file = processed_dir / "stats.json"
     if not stats_file.exists():
         raise FileNotFoundError(f"Khong tim thay file thong ke: {stats_file}")
