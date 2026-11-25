@@ -10,7 +10,7 @@ from typing import Sequence
 
 from sacrebleu.metrics import BLEU
 
-from src.data.tokenizer import BaseTokenizer
+from src.data.tokenizer import BaseTokenizer, load_tokenizer
 
 
 def _normalize_text(text: str) -> str:
@@ -140,10 +140,17 @@ def _read_lines(path: Path) -> list[str]:
 
 def evaluate_split_sanity(
     processed_dir: Path = Path("data/processed"),
+    tokenizer_path: Path = Path("data/tokenizer/bpe_vi.json"),
+    max_len: int = 128,
+    seed: int = 42,
 ) -> dict:
-    """Chạy 5 kịch bản sanity check SacreBLEU trên tập val.vi và test.vi."""
-    rng = random.Random(42)
-    report: dict = {"splits": {}}
+    """Chạy bộ kiểm định SacreBLEU chuẩn nhóm trên tập val.vi, test.vi và mức câu đơn."""
+    tgt_tok = load_tokenizer(tokenizer_path) if tokenizer_path.exists() else None
+    report: dict = {
+        "config": {"max_len": max_len, "seed": seed, "tokenizer": str(tokenizer_path)},
+        "splits": {},
+        "sentence_sanity": {},
+    }
 
     for split in ("val", "test"):
         ref_path = processed_dir / f"{split}.vi"
@@ -151,7 +158,8 @@ def evaluate_split_sanity(
             continue
 
         refs = _read_lines(ref_path)
-        empty_hyps = ["" for _ in refs]
+        rng = random.Random(seed)
+
         half_hyps = [
             " ".join(line.split()[: max(1, len(line.split()) // 2)]) for line in refs
         ]
@@ -160,16 +168,40 @@ def evaluate_split_sanity(
             words = line.split()
             rng.shuffle(words)
             shuffled_hyps.append(" ".join(words))
-        lower_hyps = [line.lower() for line in refs]
 
-        report["splits"][split] = {
+        split_res: dict = {
             "num_sentences": len(refs),
-            "perfect_match": compute_corpus_bleu(refs, refs),
-            "empty_predictions": compute_corpus_bleu(empty_hyps, refs),
-            "truncated_half": compute_corpus_bleu(half_hyps, refs),
-            "word_order_shuffled": compute_corpus_bleu(shuffled_hyps, refs),
-            "lowercased": compute_corpus_bleu(lower_hyps, refs),
+            "identity": compute_corpus_bleu(refs, refs),
         }
+        if tgt_tok is not None:
+            oracle_hyps = [
+                tgt_tok.decode(
+                    tgt_tok.encode(line, add_special_tokens=True, max_len=max_len),
+                    skip_special_tokens=True,
+                )
+                for line in refs
+            ]
+            split_res["oracle_bpe_ceiling"] = compute_corpus_bleu(oracle_hyps, refs)
+
+        split_res["truncated_half"] = compute_corpus_bleu(half_hyps, refs)
+        split_res["word_order_shuffled"] = compute_corpus_bleu(shuffled_hyps, refs)
+        report["splits"][split] = split_res
+
+    # 4 test mức câu đơn chuẩn
+    sent_ref = "Hôm nay bầu trời ở Hà Nội rất trong xanh và mát mẻ ."
+    sent_words = sent_ref.split()
+    sent_half = " ".join(sent_words[: max(1, len(sent_words) // 2)])
+    sent_scrambled_words = list(sent_words)
+    random.Random(seed).shuffle(sent_scrambled_words)
+    sent_scrambled = " ".join(sent_scrambled_words)
+
+    report["sentence_sanity"] = {
+        "reference": sent_ref,
+        "exact_match": compute_sentence_bleu(sent_ref, sent_ref),
+        "one_word_diff": compute_sentence_bleu(sent_ref.replace("ở", "tại"), sent_ref),
+        "half_truncated": compute_sentence_bleu(sent_half, sent_ref),
+        "word_scrambled": compute_sentence_bleu(sent_scrambled, sent_ref),
+    }
 
     out_path = processed_dir / "metrics_sanity_stats.json"
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -179,27 +211,36 @@ def evaluate_split_sanity(
     print(f"Đã lưu kết quả sanity check tại: {out_path}")
     for split, data in report["splits"].items():
         print(f"\n=== {split.upper()} ({data['num_sentences']} câu) ===")
-        for scenario in (
-            "perfect_match",
-            "empty_predictions",
-            "truncated_half",
-            "word_order_shuffled",
-            "lowercased",
-        ):
+        for scenario in ("identity", "oracle_bpe_ceiling", "truncated_half", "word_order_shuffled"):
+            if scenario not in data:
+                continue
             m = data[scenario]
             print(
-                f"  {scenario:20s}: BLEU={m['bleu']:6.2f} | "
-                f"BP={m['brevity_penalty']:.4f} | P={m['precisions']}"
+                f"  {scenario:20s}: BLEU={m['bleu']:6.2f} | BP={m['brevity_penalty']:.4f} | "
+                f"len={m['sys_len']}/{m['ref_len']} | P={m['precisions']}"
             )
+
+    print("\n=== SENTENCE SANITY ===")
+    for k in ("exact_match", "one_word_diff", "half_truncated", "word_scrambled"):
+        m = report["sentence_sanity"][k]
+        print(f"  {k:16s}: BLEU={m['bleu']:6.2f} | BP={m['brevity_penalty']:.4f}")
     return report
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Kiểm định độ đo SacreBLEU.")
     parser.add_argument("--processed-dir", type=Path, default=Path("data/processed"))
+    parser.add_argument("--tokenizer-path", type=Path, default=Path("data/tokenizer/bpe_vi.json"))
+    parser.add_argument("--max-len", type=int, default=128)
+    parser.add_argument("--seed", type=int, default=42)
     return parser.parse_args()
 
 
 if __name__ == "__main__":
     args = parse_args()
-    evaluate_split_sanity(processed_dir=args.processed_dir)
+    evaluate_split_sanity(
+        processed_dir=args.processed_dir,
+        tokenizer_path=args.tokenizer_path,
+        max_len=args.max_len,
+        seed=args.seed,
+    )
