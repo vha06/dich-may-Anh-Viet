@@ -19,9 +19,9 @@ def clean_text(text: str) -> str:
     # Unescape twice in case of nested entities such as &amp;apos;
     cleaned = html.unescape(html.unescape(text))
     cleaned = unicodedata.normalize("NFC", cleaned)
-    # Remove invisible Unicode control/format chars while preserving standard whitespace
+    # Remove invisible Unicode control/format chars while keeping whitespace to avoid word merging
     cleaned = "".join(
-        ch for ch in cleaned if unicodedata.category(ch)[0] != "C" or ch in "\t\n\r"
+        ch for ch in cleaned if unicodedata.category(ch)[0] != "C" or ch.isspace()
     )
     cleaned = WHITESPACE_RE.sub(" ", cleaned).strip()
     return cleaned
@@ -55,15 +55,32 @@ def _length_summary(lengths: list[int]) -> dict[str, float | int]:
 
 
 def compute_split_stats(en_lines: list[str], vi_lines: list[str]) -> dict[str, Any]:
-    """Compute word-count statistics for parallel En-Vi sentences."""
+    """Compute word-count and length-ratio statistics for parallel En-Vi sentences."""
     if len(en_lines) != len(vi_lines):
         raise ValueError(f"Line count mismatch: en={len(en_lines)}, vi={len(vi_lines)}")
     en_lengths = [len(line.split()) for line in en_lines]
     vi_lengths = [len(line.split()) for line in vi_lines]
+
+    ratios: list[float] = []
+    abnormal_count = 0
+    for l_en, l_vi in zip(en_lengths, vi_lengths):
+        if l_en > 0 and l_vi > 0:
+            ratio = l_vi / l_en
+            ratios.append(ratio)
+            if (ratio > 3.0 or ratio < 0.33) and (l_en >= 4 or l_vi >= 4):
+                abnormal_count += 1
+
+    ratio_stats = {
+        "mean_ratio": round(sum(ratios) / len(ratios), 2) if ratios else 0.0,
+        "abnormal_count": abnormal_count,
+        "abnormal_pct": round(abnormal_count / len(ratios) * 100, 2) if ratios else 0.0,
+    }
+
     return {
         "num_sentences": len(en_lines),
         "en_word_len": _length_summary(en_lengths),
         "vi_word_len": _length_summary(vi_lengths),
+        "length_ratio": ratio_stats,
     }
 
 
@@ -73,24 +90,27 @@ def process_split(
     out_src_path: Path,
     out_tgt_path: Path,
     is_train: bool = False,
-    max_len: int | None = None,
+    max_words: int | None = 128,
     remove_duplicates: bool = True,
 ) -> dict[str, Any]:
     """Clean a parallel split and write processed outputs.
 
     For validation and test splits (is_train=False), every sentence pair is preserved
-    to ensure fair and standardized BLEU evaluation.
+    to ensure fair and standardized BLEU evaluation. Pass `max_words <= 0` or `None`
+    to disable length filtering on the training split.
     """
     with src_path.open("r", encoding="utf-8") as f_src:
-        raw_src_lines = f_src.read().splitlines()
+        raw_src_lines = [line.rstrip("\r\n") for line in f_src]
     with tgt_path.open("r", encoding="utf-8") as f_tgt:
-        raw_tgt_lines = f_tgt.read().splitlines()
+        raw_tgt_lines = [line.rstrip("\r\n") for line in f_tgt]
 
     if len(raw_src_lines) != len(raw_tgt_lines):
         raise ValueError(
             f"So dong nguon va dich khong khop ({src_path.name}={len(raw_src_lines)}, "
             f"{tgt_path.name}={len(raw_tgt_lines)})"
         )
+
+    effective_max_words = max_words if (max_words is not None and max_words > 0) else None
 
     cleaned_src: list[str] = []
     cleaned_tgt: list[str] = []
@@ -109,8 +129,9 @@ def process_split(
             if not clean_s or not clean_t:
                 dropped_empty += 1
                 continue
-            if max_len is not None and (
-                len(clean_s.split()) > max_len or len(clean_t.split()) > max_len
+            if effective_max_words is not None and (
+                len(clean_s.split()) > effective_max_words
+                or len(clean_t.split()) > effective_max_words
             ):
                 dropped_too_long += 1
                 continue
@@ -148,19 +169,37 @@ def process_split(
     }
     stats["samples"] = samples
     stats["pairs"] = set(zip(cleaned_src, cleaned_tgt))
+    stats["src_set"] = set(cleaned_src)
+    stats["tgt_set"] = set(cleaned_tgt)
     return stats
 
 
-def verify_split_separation(split_pairs: dict[str, set[tuple[str, str]]]) -> dict[str, int]:
-    """Check overlap between train, val, and test splits."""
+def verify_split_separation(
+    split_pairs: dict[str, set[tuple[str, str]]],
+    split_srcs: dict[str, set[str]],
+    split_tgts: dict[str, set[str]],
+) -> dict[str, Any]:
+    """Check 3-level overlap (pairs, source_only, target_only) across train, val, and test splits."""
     val_pairs = split_pairs["val"]
     test_pairs = split_pairs["test"]
     train_pairs = split_pairs["train"]
 
     overlap = {
-        "val_test_overlap": len(val_pairs & test_pairs),
-        "train_val_overlap": len(train_pairs & val_pairs),
-        "train_test_overlap": len(train_pairs & test_pairs),
+        "pairs": {
+            "val_test": len(val_pairs & test_pairs),
+            "train_val": len(train_pairs & val_pairs),
+            "train_test": len(train_pairs & test_pairs),
+        },
+        "source_only": {
+            "val_test": len(split_srcs["val"] & split_srcs["test"]),
+            "train_val": len(split_srcs["train"] & split_srcs["val"]),
+            "train_test": len(split_srcs["train"] & split_srcs["test"]),
+        },
+        "target_only": {
+            "val_test": len(split_tgts["val"] & split_tgts["test"]),
+            "train_val": len(split_tgts["train"] & split_tgts["val"]),
+            "train_test": len(split_tgts["train"] & split_tgts["test"]),
+        },
     }
     if val_pairs == test_pairs:
         raise ValueError("Canh bao: tap val va test bi trung nhau hoan toan!")
@@ -184,10 +223,17 @@ def parse_args() -> argparse.Namespace:
         help="Thu muc luu du lieu da lam sach (mac dinh: data/processed)",
     )
     parser.add_argument(
-        "--max-len",
+        "--max-words",
+        dest="max_words",
         type=int,
-        default=None,
-        help="Loc bo cac cau o tap train co do dai > max-len tu (mac dinh: khong loc)",
+        default=128,
+        help="Loc bo cac cau o tap train co do dai > max-words tu (mac dinh: 128; truyen <= 0 de tat loc)",
+    )
+    parser.add_argument(
+        "--max-len",
+        dest="max_words",
+        type=int,
+        help="Alias cho --max-words",
     )
     parser.add_argument(
         "--keep-duplicates",
@@ -204,6 +250,9 @@ def main() -> int:
     args = parse_args()
     raw_dir: Path = args.raw_dir
     processed_dir: Path = args.processed_dir
+    effective_max_words = (
+        args.max_words if (args.max_words is not None and args.max_words > 0) else None
+    )
 
     split_specs = [
         ("train", "train.en", "train.vi", "train.en", "train.vi", True),
@@ -213,6 +262,8 @@ def main() -> int:
 
     all_stats: dict[str, Any] = {}
     split_pairs: dict[str, set[tuple[str, str]]] = {}
+    split_srcs: dict[str, set[str]] = {}
+    split_tgts: dict[str, set[str]] = {}
     sample_preview: list[dict[str, str]] = []
 
     for split_name, raw_en, raw_vi, out_en, out_vi, is_train in split_specs:
@@ -222,19 +273,21 @@ def main() -> int:
             out_src_path=processed_dir / out_en,
             out_tgt_path=processed_dir / out_vi,
             is_train=is_train,
-            max_len=args.max_len,
+            max_words=effective_max_words,
             remove_duplicates=not args.keep_duplicates,
         )
         split_pairs[split_name] = res.pop("pairs")
+        split_srcs[split_name] = res.pop("src_set")
+        split_tgts[split_name] = res.pop("tgt_set")
         samples = res.pop("samples")
         if split_name == "val" or not sample_preview:
             sample_preview = samples or sample_preview
         all_stats[split_name] = res
 
-    overlap = verify_split_separation(split_pairs)
+    overlap = verify_split_separation(split_pairs, split_srcs, split_tgts)
     report = {
         "config": {
-            "max_len": args.max_len,
+            "max_words": effective_max_words,
             "remove_duplicates": not args.keep_duplicates,
         },
         "splits": all_stats,
@@ -249,12 +302,15 @@ def main() -> int:
         en_s = s["en_word_len"]
         vi_s = s["vi_word_len"]
         drop = s["dropped"]
+        ratio_s = s["length_ratio"]
         print(
             f"\n[{name.upper()}] Goc: {s['raw_num_sentences']:,} -> Sau lam sach: {s['num_sentences']:,} cap cau"
         )
         if name == "train":
+            len_label = f" (>{effective_max_words} tu)" if effective_max_words is not None else ""
             print(
-                f"  Da loai bo -> rong: {drop['empty']}, trung lap: {drop['duplicate']}, qua dai: {drop['too_long']}"
+                f"  Da loai bo -> rong: {drop['empty']}, trung lap: {drop['duplicate']}, "
+                f"qua dai{len_label}: {drop['too_long']}"
             )
         print(
             f"  Do dai EN (tu): mean={en_s['mean']}, median={en_s['median']}, "
@@ -264,11 +320,24 @@ def main() -> int:
             f"  Do dai VI (tu): mean={vi_s['mean']}, median={vi_s['median']}, "
             f"p95={vi_s['p95']}, p99={vi_s['p99']}, min={vi_s['min']}, max={vi_s['max']}"
         )
+        print(
+            f"  Ty le do dai (VI/EN): trung binh={ratio_s['mean_ratio']}, "
+            f"lech bat thuong (>3x hoac <0.33x): {ratio_s['abnormal_count']} cau ({ratio_s['abnormal_pct']}%)"
+        )
 
-    print("\n=== Kiem tra phan chia tap du lieu (Overlap Check) ===")
-    print(f"  val vs test overlap : {overlap['val_test_overlap']} cap cau")
-    print(f"  train vs val overlap: {overlap['train_val_overlap']} cap cau")
-    print(f"  train vs test overlap: {overlap['train_test_overlap']} cap cau")
+    print("\n=== Kiem tra phan chia tap du lieu (Overlap Check 3 tang) ===")
+    print("  Trung ca cap (pairs):")
+    print(f"    val vs test  : {overlap['pairs']['val_test']} cap cau")
+    print(f"    train vs val : {overlap['pairs']['train_val']} cap cau")
+    print(f"    train vs test: {overlap['pairs']['train_test']} cap cau")
+    print("  Trung cau nguon EN (source_only):")
+    print(f"    val vs test  : {overlap['source_only']['val_test']} cau")
+    print(f"    train vs val : {overlap['source_only']['train_val']} cau")
+    print(f"    train vs test: {overlap['source_only']['train_test']} cau")
+    print("  Trung cau dich VI (target_only):")
+    print(f"    val vs test  : {overlap['target_only']['val_test']} cau")
+    print(f"    train vs val : {overlap['target_only']['train_val']} cau")
+    print(f"    train vs test: {overlap['target_only']['train_test']} cau")
 
     print("\n=== 3 cap cau mau truoc va sau khi lam sach ===")
     for idx, sample in enumerate(sample_preview[:3], start=1):
@@ -279,6 +348,9 @@ def main() -> int:
         print(f"  [Clean VI]: {sample['clean_vi']}")
 
     print(f"\nDa luu thong ke chi tiet tai: {stats_path}")
+
+    assert all_stats["val"]["num_sentences"] == 1553, "Loi: Tap val khong du 1,553 dong!"
+    assert all_stats["test"]["num_sentences"] == 1268, "Loi: Tap test khong du 1,268 dong!"
     return 0
 
 
