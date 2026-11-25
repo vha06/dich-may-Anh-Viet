@@ -4,11 +4,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-try:
-    from tokenizers import Tokenizer, decoders, models, normalizers, pre_tokenizers, trainers
-except ImportError:
-    Tokenizer = None  # type: ignore
-    decoders = models = normalizers = pre_tokenizers = trainers = None  # type: ignore
+from tokenizers import Tokenizer, decoders, models, normalizers, pre_tokenizers, trainers
 
 SPECIAL_TOKENS = ["<pad>", "<unk>", "<sos>", "<eos>"]
 PAD_ID = 0
