@@ -6,17 +6,9 @@ from functools import partial
 from pathlib import Path
 from typing import Iterator
 
-try:
-    import torch
-    from torch.nn.utils.rnn import pad_sequence
-    from torch.utils.data import DataLoader, Dataset, Sampler
-except ImportError:
-    torch = None  # type: ignore
-    pad_sequence = None  # type: ignore
-    class _FallbackBase:
-        def __class_getitem__(cls, item):
-            return cls
-    DataLoader = Dataset = Sampler = _FallbackBase  # type: ignore
+import torch
+from torch.nn.utils.rnn import pad_sequence
+from torch.utils.data import DataLoader, Dataset, Sampler
 
 from src.data.tokenizer import BPETokenizer, PAD_ID
 
@@ -88,10 +80,10 @@ class TranslationDataset(Dataset):
     def __len__(self) -> int:
         return len(self.pairs)
 
-    def __getitem__(self, idx: int) -> tuple[torch.Tensor, torch.Tensor]:
+    def __getitem__(self, index: int) -> tuple[torch.Tensor, torch.Tensor]:
         if self.cached_tensors is not None:
-            return self.cached_tensors[idx]
-        src_text, tgt_text = self.pairs[idx]
+            return self.cached_tensors[index]
+        src_text, tgt_text = self.pairs[index]
         return self._tokenize_pair(src_text, tgt_text)
 
 
@@ -120,8 +112,8 @@ def collate_fn(
         tgt_mask (tùy chọn): Boolean Tensor [B, L_tgt - 1] (True tại vị trí pad).
     """
     src_list, tgt_list = zip(*batch)
-    src_padded = pad_sequence(src_list, batch_first=True, padding_value=pad_id)
-    tgt_padded = pad_sequence(tgt_list, batch_first=True, padding_value=pad_id)
+    src_padded = pad_sequence(list(src_list), batch_first=True, padding_value=pad_id)
+    tgt_padded = pad_sequence(list(tgt_list), batch_first=True, padding_value=pad_id)
 
     # Target Shifting:
     tgt_input = tgt_padded[:, :-1]
