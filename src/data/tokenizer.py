@@ -52,6 +52,11 @@ class BaseTokenizer(ABC):
         return BOS_ID
 
     @property
+    def sos_id(self) -> int:
+        """Alias for bos_id for backward compatibility with <sos> naming."""
+        return self.bos_id
+
+    @property
     def eos_id(self) -> int:
         return EOS_ID
 
