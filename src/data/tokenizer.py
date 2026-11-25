@@ -279,6 +279,16 @@ def create_tokenizer(
     raise ValueError(f"Tokenizer type '{tokenizer_type}' chưa được hỗ trợ.")
 
 
+def load_tokenizer(
+    model_path: str | Path,
+    tokenizer_type: str | None = None,
+) -> BaseTokenizer:
+    """Tải Tokenizer từ file (tự nhận diện .json -> BPE, .model -> SentencePiece)."""
+    if tokenizer_type is None:
+        tokenizer_type = "sentencepiece" if Path(model_path).suffix == ".model" else "bpe"
+    return create_tokenizer(model_path, tokenizer_type=tokenizer_type)
+
+
 def compute_tokenizer_stats(
     tokenizer: BaseTokenizer,
     lines: list[str],
