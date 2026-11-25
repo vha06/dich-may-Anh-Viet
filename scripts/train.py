@@ -135,6 +135,7 @@ def main() -> None:
         grad_clip=cfg["training"]["grad_clip"],
         checkpoint_dir=cfg["checkpoint"]["dir"],
         teacher_forcing_ratio=cfg["training"]["teacher_forcing_ratio"],
+        max_decode_len=cfg["data"]["max_len"],
     )
 
     trainer.fit(train_loader, val_loader, num_epochs=cfg["training"]["num_epochs"])

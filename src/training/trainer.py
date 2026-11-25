@@ -12,7 +12,8 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 from src.data.tokenizer import BaseTokenizer
-from src.evaluation.metrics import compute_bleu
+from src.evaluation.decode import greedy_decode
+from src.evaluation.metrics import compute_corpus_bleu
 
 
 class Trainer:
@@ -29,6 +30,7 @@ class Trainer:
         grad_clip: float = 1.0,
         checkpoint_dir: str = "checkpoints",
         teacher_forcing_ratio: float = 0.5,
+        max_decode_len: int = 128,
     ) -> None:
         self.model = model.to(device)
         self.optimizer = optimizer
@@ -40,6 +42,7 @@ class Trainer:
         self.checkpoint_dir = Path(checkpoint_dir)
         self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
         self.teacher_forcing_ratio = teacher_forcing_ratio
+        self.max_decode_len = max_decode_len
         self.best_bleu = 0.0
 
     def train_epoch(self, dataloader: DataLoader) -> float:
@@ -74,12 +77,12 @@ class Trainer:
         return total_loss / len(dataloader)
 
     @torch.no_grad()
-    def evaluate(self, dataloader: DataLoader) -> tuple[float, float]:
-        """Đánh giá trên tập val/test, trả về (loss, BLEU)."""
+    def evaluate(self, dataloader: DataLoader) -> tuple[float, dict]:
+        """Đánh giá trên tập val/test, trả về (loss, dict metrics SacreBLEU)."""
         self.model.eval()
         total_loss = 0.0
         all_predictions: list[str] = []
-        all_references: list[str] = []
+        fallback_references: list[str] = []
 
         for batch in dataloader:
             src = batch["src_ids"].to(self.device)
@@ -87,25 +90,45 @@ class Trainer:
             tgt_in = batch["tgt_input_ids"].to(self.device)
             tgt_out = batch["tgt_output_ids"].to(self.device)
 
+            # 1. Tính Val Loss với Teacher Forcing chuẩn
             outputs, _ = self.model(
                 src,
                 tgt_in,
                 src_lengths=src_lengths,
-                teacher_forcing_ratio=0.0,
+                teacher_forcing_ratio=1.0,
             )
             loss = self.criterion(outputs, tgt_out)
             total_loss += loss.item()
 
-            pred_ids = outputs.argmax(dim=-1)
-            for i in range(src.size(0)):
-                pred_text = self.tokenizer.decode(pred_ids[i])
-                ref_text = self.tokenizer.decode(tgt_out[i])
-                all_predictions.append(pred_text)
-                all_references.append(ref_text)
+            # 2. Suy luận tự do hoàn toàn (không nhìn tgt) để chấm Val BLEU
+            preds, _ = greedy_decode(
+                self.model,
+                src,
+                self.tokenizer,
+                max_len=self.max_decode_len,
+                device=self.device,
+                src_lengths=src_lengths,
+            )
+            all_predictions.extend(preds)
+
+            if not hasattr(dataloader.dataset, "tgt_lines"):
+                for i in range(src.size(0)):
+                    fallback_references.append(self.tokenizer.decode(tgt_out[i]))
+
+        # 3. Đối chiếu với văn bản gốc nguyên vẹn trên đĩa (Gold Reference)
+        if hasattr(dataloader.dataset, "tgt_lines"):
+            raw_references = list(dataloader.dataset.tgt_lines)
+        else:
+            raw_references = fallback_references
+
+        if len(all_predictions) != len(raw_references):
+            raise ValueError(
+                f"Số lượng predictions ({len(all_predictions)}) ≠ references ({len(raw_references)})"
+            )
 
         avg_loss = total_loss / len(dataloader)
-        bleu = compute_bleu(all_predictions, all_references)
-        return avg_loss, bleu
+        bleu_metrics = compute_corpus_bleu(all_predictions, raw_references)
+        return avg_loss, bleu_metrics
 
     def fit(
         self,
@@ -119,18 +142,21 @@ class Trainer:
         for epoch in range(1, num_epochs + 1):
             start = time.time()
             train_loss = self.train_epoch(train_loader)
-            val_loss, val_bleu = self.evaluate(val_loader)
+            val_loss, bleu_metrics = self.evaluate(val_loader)
+            val_bleu = bleu_metrics["bleu"]
             elapsed = time.time() - start
 
             history["train_loss"].append(train_loss)
             history["val_loss"].append(val_loss)
             history["val_bleu"].append(val_bleu)
 
+            p_str = "/".join(f"{p:.1f}" for p in bleu_metrics["precisions"])
+            bp = bleu_metrics["brevity_penalty"]
             print(
                 f"Epoch {epoch:02d}/{num_epochs} | "
                 f"Train Loss: {train_loss:.4f} | "
                 f"Val Loss: {val_loss:.4f} | "
-                f"Val BLEU: {val_bleu:.2f} | "
+                f"Val BLEU: {val_bleu:.2f} (P={p_str}, BP={bp:.3f}) | "
                 f"Time: {elapsed:.1f}s"
             )
 

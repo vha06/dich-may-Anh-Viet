@@ -13,8 +13,9 @@ def greedy_decode(
     model,
     src: Tensor,
     tokenizer: BaseTokenizer,
-    max_len: int = 100,
+    max_len: int = 128,
     device: torch.device | None = None,
+    src_lengths: Tensor | None = None,
 ) -> tuple[list[str], Tensor]:
     """Greedy decoding: mỗi bước chọn token có xác suất cao nhất.
 
@@ -26,20 +27,21 @@ def greedy_decode(
         device = next(model.parameters()).device
 
     src = src.to(device)
+    if src_lengths is not None:
+        src_lengths = src_lengths.to(device)
+
     tokens, attention_maps = model.translate(
         src,
         bos_id=tokenizer.bos_id,
         eos_id=tokenizer.eos_id,
         max_len=max_len,
+        src_lengths=src_lengths,
     )
 
-    translations = []
-    for i in range(tokens.size(0)):
-        ids = tokens[i].cpu().tolist()
-        if tokenizer.eos_id in ids:
-            ids = ids[: ids.index(tokenizer.eos_id)]
-        translations.append(tokenizer.decode(ids))
-
+    translations = [
+        tokenizer.decode(tokens[i], skip_special_tokens=True)
+        for i in range(tokens.size(0))
+    ]
     return translations, attention_maps
 
 
@@ -49,8 +51,9 @@ def beam_search_decode(
     src: Tensor,
     tokenizer: BaseTokenizer,
     beam_width: int = 5,
-    max_len: int = 100,
+    max_len: int = 128,
     device: torch.device | None = None,
+    src_lengths: Tensor | None = None,
 ) -> list[str]:
     """Beam search decoding cho 1 câu (batch_size=1).
 
@@ -64,9 +67,11 @@ def beam_search_decode(
     src = src.to(device)
     if src.dim() == 1:
         src = src.unsqueeze(0)
+    if src_lengths is not None:
+        src_lengths = src_lengths.to(device)
 
     mask = model.create_src_mask(src)
-    encoder_outputs, (hidden, cell) = model.encoder(src)
+    encoder_outputs, (hidden, cell) = model.encoder(src, src_lengths=src_lengths)
 
     bos_id = tokenizer.bos_id
     eos_id = tokenizer.eos_id
@@ -112,10 +117,4 @@ def beam_search_decode(
         return [""]
 
     best_seq = max(completed, key=lambda x: x[1] / max(len(x[0]), 1))[0]
-
-    if eos_id in best_seq:
-        best_seq = best_seq[: best_seq.index(eos_id)]
-    if best_seq and best_seq[0] == bos_id:
-        best_seq = best_seq[1:]
-
-    return [tokenizer.decode(best_seq)]
+    return [tokenizer.decode(best_seq, skip_special_tokens=True)]
