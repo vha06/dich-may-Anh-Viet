@@ -20,7 +20,7 @@ Mọi loại bộ tách từ kế thừa từ `BaseTokenizer` đều bắt buộ
 | `<eos>` | `EOS_TOKEN` / `EOS_ID` | `3` | Đánh dấu kết thúc câu (*End of Sentence*), báo cho mô hình dừng sinh từ. |
 
 ### 1.2. Hợp đồng giao tiếp chuẩn của `BaseTokenizer`
-- **Thuộc tính chuẩn:** `vocab_size`, `pad_id`, `unk_id`, `bos_id`, `eos_id`.
+- **Thuộc tính chuẩn:** `vocab_size`, `pad_id`, `unk_id`, `bos_id`, `eos_id`, cùng `@property sos_id` (`return self.bos_id`) để tương thích ngược nếu dùng chung tiện ích gọi `<sos>`.
 - **Mã hóa ra ID (`encode(text, add_special_tokens=True, max_len=None) -> list[int]`):**
   - Nếu `add_special_tokens=True`, tự động bọc `[<bos>, ..., <eos>]`.
   - Nếu truyền `max_len` (mặc định `128`), tự động cắt phần nội dung sao cho tổng độ dài $\le \text{max\_len}$ và **luôn giữ `<eos>` ở vị trí cuối cùng**.
@@ -55,29 +55,29 @@ Kết quả trích xuất trực tiếp từ [`data/tokenizer/tokenizer_stats.js
 
 | Ngôn ngữ | Tập | Số câu | Mean | Median (p50) | p95 | p99 | Min | Max | Tỷ lệ $\le 128$ token | Số câu vượt 128 |
 | :---: | :--- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| **EN** | **Train** | 132,160 | 25.26 | 21.0 | 57.0 | 84.0 | 3 | 706 | **99.88%** | 158 |
-| **EN** | **Val** (`tst2012`) | 1,553 | 22.24 | 19.0 | 47.0 | 65.0 | 4 | 103 | **100.00%** | 0 |
-| **EN** | **Test** (`tst2013`) | 1,268 | 25.99 | 22.0 | 57.0 | 80.33 | 4 | 112 | **100.00%** | 0 |
-| **VI** | **Train** | 132,160 | 27.60 | 22.0 | 62.0 | 94.0 | 3 | 863 | **99.79%** | 278 |
+| **EN** | **Train** | 131,942 | 25.02 | 21.0 | 56.0 | 82.0 | 3 | 180 | **99.97%** | 33 |
+| **EN** | **Val** (`tst2012`) | 1,553 | 22.23 | 19.0 | 47.0 | 64.48 | 4 | 103 | **100.00%** | 0 |
+| **EN** | **Test** (`tst2013`) | 1,268 | 26.00 | 22.0 | 57.0 | 80.33 | 4 | 112 | **100.00%** | 0 |
+| **VI** | **Train** | 131,942 | 27.33 | 22.0 | 62.0 | 91.0 | 3 | 165 | **99.95%** | 62 |
 | **VI** | **Val** (`tst2012`) | 1,553 | 24.61 | 21.0 | 50.0 | 72.0 | 4 | 129 | **99.94%** | 1 |
-| **VI** | **Test** (`tst2013`) | 1,268 | 29.24 | 25.0 | 65.65 | 95.33 | 4 | 127 | **100.00%** | 0 |
+| **VI** | **Test** (`tst2013`) | 1,268 | 29.23 | 25.0 | 65.65 | 95.33 | 4 | 127 | **100.00%** | 0 |
 
 ### 3.2. Chất lượng tách & khôi phục chuỗi (Subword Fertility, UNK Rate, Exact Roundtrip)
 
 | Ngôn ngữ | Tập | Tổng số từ gốc | Tổng token BPE nội dung | Subword Fertility *(token/từ)* | Số lượng `<unk>` | Tỷ lệ `<unk>` | Tỷ lệ khôi phục 100% |
 | :---: | :--- | ---: | ---: | :---: | ---: | ---: | :---: |
-| **EN** | **Train** | 2,702,476 | 3,074,508 | **1.1377** | 0 | 0.0000% | **100.00%** |
-| **EN** | **Val** | 27,983 | 31,425 | **1.1230** | 0 | 0.0000% | **100.00%** |
-| **EN** | **Test** | 26,728 | 30,424 | **1.1383** | 2 | 0.0066% | **99.84%** |
-| **VI** | **Train** | 3,306,877 | 3,383,852 | **1.0233** | 0 | 0.0000% | **100.00%** |
-| **VI** | **Val** | 34,297 | 35,109 | **1.0237** | 1 | 0.0028% | **99.94%** |
-| **VI** | **Test** | 33,682 | 34,534 | **1.0253** | 1 | 0.0029% | **99.92%** |
+| **EN** | **Train** | 2,670,454 | 3,036,879 | **1.1372** | 0 | 0.0000% | **100.00%** |
+| **EN** | **Val** | 27,983 | 31,420 | **1.1228** | 0 | 0.0000% | **100.00%** |
+| **EN** | **Test** | 26,728 | 30,438 | **1.1388** | 2 | 0.0066% | **99.84%** |
+| **VI** | **Train** | 3,265,896 | 3,341,603 | **1.0232** | 0 | 0.0000% | **100.00%** |
+| **VI** | **Val** | 34,297 | 35,111 | **1.0237** | 1 | 0.0028% | **99.94%** |
+| **VI** | **Test** | 33,682 | 34,529 | **1.0251** | 1 | 0.0029% | **99.92%** |
 
 **Phân tích các chỉ số:**
-1. **Độ dài tối đa `128` token cực kỳ hợp lý:** Ngưỡng `128` bao phủ **100%** tập `test` (EN & VI), **100%** tập `val` (EN), **99.94%** tập `val` (VI — chỉ duy nhất 1 câu dài 129 token) và **99.79%–99.88%** tập `train`.
+1. **Độ dài tối đa `128` token cực kỳ hợp lý:** Ngưỡng `128` bao phủ **100%** tập `test` (EN & VI), **100%** tập `val` (EN), **99.94%** tập `val` (VI — chỉ duy nhất 1 câu dài 129 token) và **99.95%–99.97%** tập `train` (sau khi thống nhất lọc `max_words = 128` từ ở bước tiền xử lý).
 2. **Subword Fertility thấp & tối ưu:**
-   - Tiếng Anh có trung bình **~1.138 token/từ** (từ gốc có hậu tố `-s`, `-ed`, `-ing` hoặc từ ghép hiếm được tách gọn thành 2–3 mảnh).
-   - Tiếng Việt có hệ số **~1.023 token/từ** (gần như 1:1 với âm tiết tiếng Việt vì chỉ có 25,611 âm tiết/từ phân biệt ở tập `train`; các tên riêng nước ngoài hoặc âm tiết rất hiếm mới bị tách nhỏ).
+   - Tiếng Anh có trung bình **~1.137 token/từ** (từ gốc có hậu tố `-s`, `-ed`, `-ing` hoặc từ ghép hiếm được tách gọn thành 2–3 mảnh).
+   - Tiếng Việt có hệ số **~1.023 token/từ** (gần như 1:1 với âm tiết tiếng Việt vì chỉ có `25,431` âm tiết/từ phân biệt ở tập `train`; các tên riêng nước ngoài hoặc âm tiết rất hiếm mới bị tách nhỏ).
 3. **Tỷ lệ `<unk>` gần như bằng 0:** Trên toàn bộ hơn 130,000 token của tập `val` và `test`, chỉ xuất hiện đúng **4 trường hợp** `<unk>` do ký tự ngoại lai chưa từng có trong `train`:
    - `test.en` (2 lần): `'Ashê'` (dòng 934) và `'Ōfunato'` (dòng 1,075).
    - `val.vi` (1 lần): `'̉'` — 1 dấu hỏi tổ hợp đứng cô lập (dòng 1,417).
@@ -89,30 +89,30 @@ Kết quả trích xuất trực tiếp từ [`data/tokenizer/tokenizer_stats.js
 
 ### 4.1. Ví dụ tách từ hiếm / từ ghép thành Subwords (từ tập `val`)
 - **Tiếng Anh (`bpe_en.json`):**
-  - `bonds` $\rightarrow$ `['bon', 'ds</w>']` *(IDs: `[4459, 370]`)*
-  - `four-year-old` $\rightarrow$ `['four', '-year-old</w>']` *(IDs: `[3288, 3193]`)*
-  - `jigsaw` $\rightarrow$ `['j', 'ig', 'saw</w>']` *(IDs: `[72, 2756, 1304]`)*
-  - `playwright` $\rightarrow$ `['play', 'w', 'right</w>']` *(IDs: `[5324, 85, 583]`)*
-  - `communists` $\rightarrow$ `['communi', 'sts</w>']` *(IDs: `[1402, 701]`)*
+  - `bonds` $\rightarrow$ `['bon', 'ds</w>']` *(IDs: `[4421, 370]`)*
+  - `four-year-old` $\rightarrow$ `['four', '-year-old</w>']` *(IDs: `[3274, 3182]`)*
+  - `jigsaw` $\rightarrow$ `['j', 'ig', 'saw</w>']` *(IDs: `[72, 2743, 1306]`)*
+  - `playwright` $\rightarrow$ `['play', 'w', 'right</w>']` *(IDs: `[5319, 85, 583]`)*
+  - `communists` $\rightarrow$ `['communi', 'sts</w>']` *(IDs: `[1401, 702]`)*
 - **Tiếng Việt (`bpe_vi.json`):**
-  - `trườn` $\rightarrow$ `['tr', 'ườn</w>']` *(IDs: `[448, 2187]`)*
-  - `quạnh` $\rightarrow$ `['qu', 'ạnh</w>']` *(IDs: `[475, 998]`)*
-  - `nguôi` $\rightarrow$ `['ngu', 'ôi</w>']` *(IDs: `[1143, 451]`)*
-  - `Melbourne` $\rightarrow$ `['Mel', 'bo', 'ur', 'ne</w>']` *(IDs: `[3973, 1316, 1765, 1952]`)*
+  - `trườn` $\rightarrow$ `['tr', 'ườn</w>']` *(IDs: `[448, 2198]`)*
+  - `quạnh` $\rightarrow$ `['qu', 'ạnh</w>']` *(IDs: `[475, 1001]`)*
+  - `nguôi` $\rightarrow$ `['ngu', 'ôi</w>']` *(IDs: `[1142, 451]`)*
+  - `Melbourne` $\rightarrow$ `['Mel', 'bo', 'ur', 'ne</w>']` *(IDs: `[3947, 1317, 1761, 1959]`)*
 
 ### 4.2. Ví dụ vòng lặp đầy đủ trên 1 cặp câu (từ tập `val`)
 - **Câu Tiếng Anh:** `It is a jigsaw puzzle still being put together .`
   - *Subword tokens (có `<bos>`, `<eos>`):*  
     `['<bos>', 'It</w>', 'is</w>', 'a</w>', 'j', 'ig', 'saw</w>', 'puzzle</w>', 'still</w>', 'being</w>', 'put</w>', 'together</w>', '.</w>', '<eos>']`
   - *Token IDs:*  
-    `[2, 390, 243, 140, 72, 2756, 1304, 5975, 898, 717, 754, 932, 161, 3]`
+    `[2, 389, 243, 130, 72, 2743, 1306, 5923, 908, 718, 752, 933, 137, 3]`
   - *Kết quả `decode(ids, skip_special_tokens=True)`:*  
     `It is a jigsaw puzzle still being put together .` *(Khớp gốc 100%)*
 - **Câu Tiếng Việt:** `Nó là một trò chơi ghép hình vẫn đang được xếp .`
   - *Subword tokens (có `<bos>`, `<eos>`):*  
     `['<bos>', 'Nó</w>', 'là</w>', 'một</w>', 'trò</w>', 'chơi</w>', 'ghép</w>', 'hình</w>', 'vẫn</w>', 'đang</w>', 'được</w>', 'xếp</w>', '.</w>', '<eos>']`
   - *Token IDs:*  
-    `[2, 769, 452, 457, 1163, 1028, 2080, 669, 886, 565, 496, 1647, 245, 3]`
+    `[2, 767, 452, 457, 1162, 1025, 2072, 668, 886, 566, 496, 1638, 256, 3]`
   - *Kết quả `decode(ids, skip_special_tokens=True)`:*  
     `Nó là một trò chơi ghép hình vẫn đang được xếp .` *(Khớp gốc 100%)*
 
@@ -122,9 +122,9 @@ Kết quả trích xuất trực tiếp từ [`data/tokenizer/tokenizer_stats.js
 
 | File đầu ra | Vị trí | Dung lượng | Trạng thái |
 | :--- | :--- | ---: | :--- |
-| Model BPE Tiếng Anh | `data/tokenizer/bpe_en.json` | 560,443 bytes (~547.3 KB) | `vocab_size = 8,000`, `pad=0, unk=1, bos=2, eos=3` |
-| Model BPE Tiếng Việt | `data/tokenizer/bpe_vi.json` | 546,545 bytes (~533.7 KB) | `vocab_size = 8,000`, `pad=0, unk=1, bos=2, eos=3` |
-| Thống kê đánh giá | `data/tokenizer/tokenizer_stats.json` | 66,015 bytes (~64.5 KB) | Đầy đủ số liệu trên `train`/`val`/`test` |
+| Model BPE Tiếng Anh | `data/tokenizer/bpe_en.json` | 560,337 bytes (~547.2 KB) | `vocab_size = 8,000`, `pad=0, unk=1, bos=2, eos=3` (đồng bộ `131,942` câu train) |
+| Model BPE Tiếng Việt | `data/tokenizer/bpe_vi.json` | 546,585 bytes (~533.8 KB) | `vocab_size = 8,000`, `pad=0, unk=1, bos=2, eos=3` (đồng bộ `131,942` câu train) |
+| Thống kê đánh giá | `data/tokenizer/tokenizer_stats.json` | 66,014 bytes (~64.5 KB) | Đầy đủ số liệu trên `train`/`val`/`test` |
 
 Lệnh huấn luyện lại và xuất thống kê từ thư mục gốc dự án:
 ```bash
