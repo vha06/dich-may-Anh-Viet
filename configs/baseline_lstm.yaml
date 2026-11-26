@@ -11,6 +11,7 @@ model:
 
 training:
   batch_size: 64
+  use_bucketing: true
   num_epochs: 20
   learning_rate: 0.001
   grad_clip: 1.0

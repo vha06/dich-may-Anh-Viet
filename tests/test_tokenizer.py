@@ -11,9 +11,9 @@ import torch
 from src.data.dataset import (
     TranslationDataset,
     _verify_batch_invariants,
+    build_dataloader,
     build_dataloaders,
     collate_translation_batch,
-    create_dataloader,
 )
 from src.data.tokenizer import (
     BOS_ID,
@@ -111,11 +111,11 @@ class TestTokenizerAndDataset(unittest.TestCase):
 
             for split, loader in loaders.items():
                 batch = next(iter(loader))
-                _verify_batch_invariants(batch, BOS_ID, EOS_ID, PAD_ID)
+                _verify_batch_invariants(batch, pad_id=PAD_ID, bos_id=BOS_ID, eos_id=EOS_ID)
                 self.assertEqual(batch["src_ids"].shape[0], 2)
 
             # Kiểm tra val giữ nguyên thứ tự gốc 1-1
-            val_loader = create_dataloader(
+            val_loader = build_dataloader(
                 tmp_dir / "val.en", tmp_dir / "val.vi", src_tok, tgt_tok, batch_size=3, shuffle=False
             )
             val_batch = next(iter(val_loader))

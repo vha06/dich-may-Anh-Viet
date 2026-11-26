@@ -12,7 +12,7 @@ import torch
 import yaml
 
 from src.data.tokenizer import create_tokenizer
-from src.data.dataset import create_dataloader
+from src.data.dataset import build_dataloader
 from src.models.seq2seq_lstm import Encoder, Decoder, Seq2Seq
 from src.training.losses import LabelSmoothedCrossEntropy
 from src.training.schedulers import build_scheduler
@@ -80,9 +80,9 @@ def main() -> None:
     use_pin_memory = device.type == "cuda"
     use_bucketing = cfg["training"].get("use_bucketing", False)
 
-    train_loader = create_dataloader(
-        en_path=cfg["data"]["train_en"],
-        vi_path=cfg["data"]["train_vi"],
+    train_loader = build_dataloader(
+        src_path=cfg["data"]["train_en"],
+        tgt_path=cfg["data"]["train_vi"],
         src_tokenizer=src_tokenizer,
         tgt_tokenizer=tgt_tokenizer,
         batch_size=cfg["training"]["batch_size"],
@@ -91,9 +91,9 @@ def main() -> None:
         max_len=cfg["data"]["max_len"],
         pin_memory=use_pin_memory,
     )
-    val_loader = create_dataloader(
-        en_path=cfg["data"]["val_en"],
-        vi_path=cfg["data"]["val_vi"],
+    val_loader = build_dataloader(
+        src_path=cfg["data"]["val_en"],
+        tgt_path=cfg["data"]["val_vi"],
         src_tokenizer=src_tokenizer,
         tgt_tokenizer=tgt_tokenizer,
         batch_size=cfg["training"]["batch_size"],
