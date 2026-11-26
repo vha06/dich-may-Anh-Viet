@@ -45,7 +45,6 @@ def build_model(
         embed_dim=m["embed_dim"],
         encoder_dim=m["hidden_dim"] * 2,
         hidden_dim=m["hidden_dim"],
-        attention_dim=m["attention_dim"],
         num_layers=m["num_layers"],
         dropout=m["dropout"],
         pad_id=pad_id,

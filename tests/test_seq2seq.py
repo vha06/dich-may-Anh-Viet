@@ -1,10 +1,10 @@
-"""Unit tests cho mô hình Seq2Seq LSTM + Attention."""
+"""Unit tests cho mô hình Seq2Seq LSTM + Luong Attention."""
 
 import unittest
 
 import torch
 
-from src.models.seq2seq_lstm import Encoder, BahdanauAttention, Decoder, Seq2Seq
+from src.models.seq2seq_lstm import Decoder, Encoder, LuongAttention, Seq2Seq
 
 
 class TestEncoder(unittest.TestCase):
@@ -29,7 +29,7 @@ class TestEncoder(unittest.TestCase):
 
 class TestAttention(unittest.TestCase):
     def test_output_shape_and_sum(self):
-        attn = BahdanauAttention(encoder_dim=128, decoder_dim=64, attention_dim=32)
+        attn = LuongAttention(encoder_dim=128, decoder_dim=64)
         decoder_hidden = torch.randn(4, 64)
         encoder_outputs = torch.randn(4, 10, 128)
 
@@ -39,7 +39,7 @@ class TestAttention(unittest.TestCase):
         torch.testing.assert_close(weights.sum(dim=-1), torch.ones(4))
 
     def test_mask(self):
-        attn = BahdanauAttention(encoder_dim=128, decoder_dim=64, attention_dim=32)
+        attn = LuongAttention(encoder_dim=128, decoder_dim=64)
         decoder_hidden = torch.randn(2, 64)
         encoder_outputs = torch.randn(2, 5, 128)
         mask = torch.tensor([[False, False, False, True, True],
@@ -54,7 +54,7 @@ class TestSeq2Seq(unittest.TestCase):
         enc = Encoder(vocab_size=100, embed_dim=32, hidden_dim=64,
                       num_layers=2, dropout=0.0)
         dec = Decoder(vocab_size=100, embed_dim=32, encoder_dim=128,
-                      hidden_dim=64, attention_dim=32, num_layers=2, dropout=0.0)
+                      hidden_dim=64, num_layers=2, dropout=0.0)
         self.model = Seq2Seq(enc, dec, pad_id=0)
 
     def test_forward_shape(self):

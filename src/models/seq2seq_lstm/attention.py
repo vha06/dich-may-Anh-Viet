@@ -1,4 +1,4 @@
-"""Bahdanau (Additive) Attention — tính trọng số chú ý cho Decoder."""
+"""Luong (Global General) Attention — tính trọng số chú ý cho Decoder."""
 
 from __future__ import annotations
 
@@ -7,17 +7,15 @@ import torch.nn as nn
 from torch import Tensor
 
 
-class BahdanauAttention(nn.Module):
-    """Additive Attention (Bahdanau et al., 2015).
+class LuongAttention(nn.Module):
+    """Global General Multiplicative Attention (Luong et al., 2015).
 
-    score(s_t, h_j) = v^T · tanh(W_s · s_t + W_h · h_j)
+    score(h_t, h_bar_s) = h_t^T · W_a · h_bar_s
     """
 
-    def __init__(self, encoder_dim: int, decoder_dim: int, attention_dim: int) -> None:
+    def __init__(self, encoder_dim: int, decoder_dim: int) -> None:
         super().__init__()
-        self.W_s = nn.Linear(decoder_dim, attention_dim, bias=False)
-        self.W_h = nn.Linear(encoder_dim, attention_dim, bias=False)
-        self.v = nn.Linear(attention_dim, 1, bias=False)
+        self.W_a = nn.Linear(encoder_dim, decoder_dim, bias=False)
 
     def forward(
         self,
@@ -33,12 +31,10 @@ class BahdanauAttention(nn.Module):
 
         Returns:
             context: [batch, encoder_dim]       — vector ngữ cảnh.
-            weights: [batch, src_len]           — trọng số attention (dùng để vẽ heatmap).
+            weights: [batch, src_len]           — trọng số attention (dùng vẽ heatmap).
         """
-        score_s = self.W_s(decoder_hidden).unsqueeze(1)
-        score_h = self.W_h(encoder_outputs)
-        energy = torch.tanh(score_s + score_h)
-        attention_scores = self.v(energy).squeeze(-1)
+        proj_h = self.W_a(encoder_outputs)
+        attention_scores = torch.bmm(proj_h, decoder_hidden.unsqueeze(-1)).squeeze(-1)
 
         if mask is not None:
             attention_scores = attention_scores.masked_fill(mask, float("-inf"))
