@@ -8,17 +8,29 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Iterable
 
-import sentencepiece as spm
+try:
+    import sentencepiece as spm
+except ImportError:
+    spm = None  # type: ignore[assignment]
 from tokenizers import Tokenizer
 from tokenizers.decoders import BPEDecoder
 from tokenizers.models import BPE
 from tokenizers.pre_tokenizers import WhitespaceSplit
 from tokenizers.trainers import BpeTrainer
 
+PAD_TOKEN = "<pad>"
+UNK_TOKEN = "<unk>"
+BOS_TOKEN = "<bos>"
+EOS_TOKEN = "<eos>"
+
+PAD_ID, UNK_ID, BOS_ID, EOS_ID = 0, 1, 2, 3
+SPECIAL_TOKENS = [PAD_TOKEN, UNK_TOKEN, BOS_TOKEN, EOS_TOKEN]
+
 VOCAB_SIZE = 8000
 MIN_FREQUENCY = 2
-PAD_ID, UNK_ID, BOS_ID, EOS_ID = 0, 1, 2, 3
-SPECIAL_TOKENS = ["<pad>", "<unk>", "<bos>", "<eos>"]
+DEFAULT_VOCAB_SIZE = VOCAB_SIZE
+DEFAULT_MIN_FREQUENCY = MIN_FREQUENCY
+DEFAULT_MAX_SEQ_LEN = 128
 
 
 class BaseTokenizer(ABC):
@@ -75,6 +87,16 @@ class BaseTokenizer(ABC):
     ) -> str:
         ...
 
+    @abstractmethod
+    def id_to_token(self, token_id: int) -> str:
+        """Ánh xạ 1 token ID về chuỗi token tương ứng."""
+        ...
+
+    @abstractmethod
+    def token_to_id(self, token: str) -> int:
+        """Ánh xạ 1 chuỗi token về token ID số nguyên."""
+        ...
+
     def _apply_special_and_truncate(
         self,
         items: list,
@@ -124,6 +146,21 @@ class BPETokenizer(BaseTokenizer):
     def __init__(self, model_path: str | Path) -> None:
         self.model_path = Path(model_path)
         self.tokenizer = Tokenizer.from_file(str(self.model_path))
+        self._verify_special_token_ids()
+
+    def _verify_special_token_ids(self) -> None:
+        expected = {
+            PAD_TOKEN: PAD_ID,
+            UNK_TOKEN: UNK_ID,
+            BOS_TOKEN: BOS_ID,
+            EOS_TOKEN: EOS_ID,
+        }
+        for token, expected_id in expected.items():
+            actual_id = self.tokenizer.token_to_id(token)
+            if actual_id != expected_id:
+                raise ValueError(
+                    f"Special token {token!r} có ID={actual_id}, kỳ vọng ID={expected_id}"
+                )
 
     @classmethod
     def train(
@@ -186,6 +223,14 @@ class BPETokenizer(BaseTokenizer):
         cleaned = self._prepare_decode_ids(ids, skip_special_tokens=skip_special_tokens)
         return self.tokenizer.decode(cleaned, skip_special_tokens=skip_special_tokens).strip()
 
+    def id_to_token(self, token_id: int) -> str:
+        tok = self.tokenizer.id_to_token(int(token_id))
+        return UNK_TOKEN if tok is None else tok
+
+    def token_to_id(self, token: str) -> int:
+        token_id = self.tokenizer.token_to_id(token)
+        return UNK_ID if token_id is None else int(token_id)
+
     def __repr__(self) -> str:
         return f"BPETokenizer(path={self.model_path.name}, vocab_size={self.vocab_size})"
 
@@ -194,6 +239,10 @@ class SentencePieceTokenizer(BaseTokenizer):
     """SentencePiece BPE Tokenizer (mở rộng so sánh với HF BPE)."""
 
     def __init__(self, model_path: str | Path) -> None:
+        if spm is None:
+            raise ImportError(
+                "Thiếu thư viện 'sentencepiece'. Cài đặt bằng: pip install sentencepiece"
+            )
         self.model_path = Path(model_path)
         self.sp = spm.SentencePieceProcessor()
         self.sp.load(str(self.model_path))
@@ -205,6 +254,10 @@ class SentencePieceTokenizer(BaseTokenizer):
         model_prefix: str | Path,
         vocab_size: int = VOCAB_SIZE,
     ) -> SentencePieceTokenizer:
+        if spm is None:
+            raise ImportError(
+                "Thiếu thư viện 'sentencepiece'. Cài đặt bằng: pip install sentencepiece"
+            )
         prefix_path = Path(model_prefix)
         prefix_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -262,6 +315,15 @@ class SentencePieceTokenizer(BaseTokenizer):
         cleaned = self._prepare_decode_ids(ids, skip_special_tokens=skip_special_tokens)
         return self.sp.decode(cleaned)
 
+    def id_to_token(self, token_id: int) -> str:
+        tid = int(token_id)
+        if tid < 0 or tid >= self.vocab_size:
+            return UNK_TOKEN
+        return str(self.sp.id_to_piece(tid))
+
+    def token_to_id(self, token: str) -> int:
+        return int(self.sp.piece_to_id(token))
+
     def __repr__(self) -> str:
         return f"SentencePieceTokenizer(path={self.model_path.name}, vocab_size={self.vocab_size})"
 
@@ -280,13 +342,13 @@ def create_tokenizer(
 
 
 def load_tokenizer(
-    model_path: str | Path,
+    path: str | Path,
     tokenizer_type: str | None = None,
 ) -> BaseTokenizer:
     """Tải Tokenizer từ file (tự nhận diện .json -> BPE, .model -> SentencePiece)."""
     if tokenizer_type is None:
-        tokenizer_type = "sentencepiece" if Path(model_path).suffix == ".model" else "bpe"
-    return create_tokenizer(model_path, tokenizer_type=tokenizer_type)
+        tokenizer_type = "sentencepiece" if Path(path).suffix == ".model" else "bpe"
+    return create_tokenizer(path, tokenizer_type=tokenizer_type)
 
 
 def compute_tokenizer_stats(

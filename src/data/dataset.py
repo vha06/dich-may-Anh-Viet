@@ -12,9 +12,17 @@ from torch import Tensor
 from torch.nn.utils.rnn import pad_sequence
 from torch.utils.data import DataLoader, Dataset, Sampler
 
-from src.data.tokenizer import PAD_ID, BaseTokenizer, load_tokenizer
+from src.data.tokenizer import (
+    BOS_ID,
+    DEFAULT_MAX_SEQ_LEN,
+    EOS_ID,
+    PAD_ID,
+    BaseTokenizer,
+    load_tokenizer,
+)
 
-DEFAULT_MAX_LEN = 128
+DEFAULT_BATCH_SIZE = 64
+DEFAULT_MAX_LEN = DEFAULT_MAX_SEQ_LEN
 
 
 class TranslationDataset(Dataset):
@@ -22,26 +30,43 @@ class TranslationDataset(Dataset):
 
     def __init__(
         self,
-        en_path: str | Path,
-        vi_path: str | Path,
+        src_path: str | Path,
+        tgt_path: str | Path,
         src_tokenizer: BaseTokenizer,
         tgt_tokenizer: BaseTokenizer | None = None,
-        max_len: int = DEFAULT_MAX_LEN,
+        max_len: int = DEFAULT_MAX_SEQ_LEN,
         pre_tokenize: bool = True,
     ) -> None:
+        self.src_path = Path(src_path)
+        self.tgt_path = Path(tgt_path)
+        if not self.src_path.exists():
+            raise FileNotFoundError(f"Không tìm thấy file nguồn: {self.src_path}")
+        if not self.tgt_path.exists():
+            raise FileNotFoundError(f"Không tìm thấy file đích: {self.tgt_path}")
         if max_len < 2:
             raise ValueError(f"max_len phải >= 2 để chứa <bos> và <eos>, nhận được {max_len}")
 
-        with Path(en_path).open("r", encoding="utf-8") as f:
+        resolved_tgt_tok = tgt_tokenizer if tgt_tokenizer is not None else src_tokenizer
+        if src_tokenizer.pad_id != resolved_tgt_tok.pad_id:
+            raise ValueError(
+                f"pad_id không khớp giữa src ({src_tokenizer.pad_id}) và tgt ({resolved_tgt_tok.pad_id})"
+            )
+
+        with self.src_path.open("r", encoding="utf-8") as f:
             self.src_lines = [line.rstrip("\r\n") for line in f]
-        with Path(vi_path).open("r", encoding="utf-8") as f:
+        with self.tgt_path.open("r", encoding="utf-8") as f:
             self.tgt_lines = [line.rstrip("\r\n") for line in f]
 
         if len(self.src_lines) != len(self.tgt_lines):
-            raise ValueError("Số dòng file Anh và Việt không khớp!")
+            raise ValueError(
+                f"Số dòng không khớp: {self.src_path}={len(self.src_lines)}, "
+                f"{self.tgt_path}={len(self.tgt_lines)}"
+            )
+        if not self.src_lines:
+            raise ValueError(f"Dữ liệu rỗng tại {self.src_path}")
 
         self.src_tokenizer = src_tokenizer
-        self.tgt_tokenizer = tgt_tokenizer if tgt_tokenizer is not None else src_tokenizer
+        self.tgt_tokenizer = resolved_tgt_tok
         self.max_len = max_len
         self.pre_tokenize = pre_tokenize
         self.pad_id = self.src_tokenizer.pad_id
@@ -151,27 +176,15 @@ class BucketBatchSampler(Sampler[list[int]]):
 
 
 def create_dataloader(
-    en_path: str | Path,
-    vi_path: str | Path,
-    src_tokenizer: BaseTokenizer,
-    tgt_tokenizer: BaseTokenizer | None = None,
-    batch_size: int = 64,
-    shuffle: bool = True,
-    use_bucketing: bool = False,
+    dataset: TranslationDataset,
+    batch_size: int = DEFAULT_BATCH_SIZE,
+    shuffle: bool = False,
     num_workers: int = 0,
-    max_len: int = DEFAULT_MAX_LEN,
     pin_memory: bool = False,
-    pre_tokenize: bool = True,
+    drop_last: bool = False,
+    use_bucketing: bool = False,
 ) -> DataLoader:
-    """Tạo DataLoader đơn lẻ hỗ trợ BucketBatchSampler và collate_fn cấp module."""
-    dataset = TranslationDataset(
-        en_path=en_path,
-        vi_path=vi_path,
-        src_tokenizer=src_tokenizer,
-        tgt_tokenizer=tgt_tokenizer,
-        max_len=max_len,
-        pre_tokenize=pre_tokenize,
-    )
+    """Bọc TranslationDataset vào PyTorch DataLoader hỗ trợ dynamic padding và bucketing."""
     collate_fn = functools.partial(collate_translation_batch, pad_id=dataset.pad_id)
 
     if use_bucketing:
@@ -195,18 +208,48 @@ def create_dataloader(
         num_workers=num_workers,
         collate_fn=collate_fn,
         pin_memory=pin_memory,
+        drop_last=drop_last,
     )
 
 
-build_dataloader = create_dataloader
+def build_dataloader(
+    src_path: str | Path,
+    tgt_path: str | Path,
+    src_tokenizer: BaseTokenizer,
+    tgt_tokenizer: BaseTokenizer | None = None,
+    batch_size: int = DEFAULT_BATCH_SIZE,
+    shuffle: bool = True,
+    use_bucketing: bool = False,
+    num_workers: int = 0,
+    max_len: int = DEFAULT_MAX_SEQ_LEN,
+    pin_memory: bool = False,
+    pre_tokenize: bool = True,
+) -> DataLoader:
+    """Tạo DataLoader đơn lẻ từ cặp đường dẫn file nguồn/đích."""
+    dataset = TranslationDataset(
+        src_path=src_path,
+        tgt_path=tgt_path,
+        src_tokenizer=src_tokenizer,
+        tgt_tokenizer=tgt_tokenizer,
+        max_len=max_len,
+        pre_tokenize=pre_tokenize,
+    )
+    return create_dataloader(
+        dataset,
+        batch_size=batch_size,
+        shuffle=shuffle,
+        num_workers=num_workers,
+        pin_memory=pin_memory,
+        use_bucketing=use_bucketing,
+    )
 
 
 def build_dataloaders(
     processed_dir: str | Path,
     src_tokenizer: BaseTokenizer,
     tgt_tokenizer: BaseTokenizer | None = None,
-    batch_size: int = 64,
-    max_len: int = DEFAULT_MAX_LEN,
+    batch_size: int = DEFAULT_BATCH_SIZE,
+    max_len: int = DEFAULT_MAX_SEQ_LEN,
     use_bucketing: bool = False,
     num_workers: int = 0,
     pin_memory: bool = False,
@@ -224,29 +267,32 @@ def build_dataloaders(
         en_p = pdir / f"{split}.en"
         vi_p = pdir / f"{split}.vi"
         if en_p.exists() and vi_p.exists():
-            loaders[split] = create_dataloader(
-                en_path=en_p,
-                vi_path=vi_p,
+            dataset = TranslationDataset(
+                src_path=en_p,
+                tgt_path=vi_p,
                 src_tokenizer=src_tokenizer,
                 tgt_tokenizer=tgt_tokenizer,
+                max_len=max_len,
+                pre_tokenize=pre_tokenize,
+            )
+            loaders[split] = create_dataloader(
+                dataset,
                 batch_size=batch_size,
                 shuffle=shuffle,
-                use_bucketing=bucketing,
                 num_workers=num_workers,
-                max_len=max_len,
                 pin_memory=pin_memory,
-                pre_tokenize=pre_tokenize,
+                use_bucketing=bucketing,
             )
     return loaders
 
 
 def _verify_batch_invariants(
     batch: dict[str, Tensor],
-    bos_id: int,
-    eos_id: int,
-    pad_id: int,
+    pad_id: int = PAD_ID,
+    bos_id: int = BOS_ID,
+    eos_id: int = EOS_ID,
 ) -> None:
-    """Kiểm tra hợp đồng 5 khóa, dtype, độ dài và vị trí <bos>/<eos>."""
+    """Kiểm tra hợp đồng 5 khóa, dtype, độ dài, vị trí <bos>/<eos> và Teacher Forcing shift."""
     expected_keys = {"src_ids", "src_lengths", "tgt_input_ids", "tgt_output_ids", "tgt_lengths"}
     assert set(batch.keys()) == expected_keys
     for val in batch.values():
@@ -257,22 +303,29 @@ def _verify_batch_invariants(
     assert batch["tgt_lengths"].shape == (bsz,)
     assert batch["tgt_input_ids"].shape == batch["tgt_output_ids"].shape
 
+    src_ids = batch["src_ids"]
+    tgt_in = batch["tgt_input_ids"]
+    tgt_out = batch["tgt_output_ids"]
+
     for i in range(bsz):
         slen = int(batch["src_lengths"][i].item())
         tlen = int(batch["tgt_lengths"][i].item())
-        assert batch["src_ids"][i, 0].item() == bos_id
-        assert batch["src_ids"][i, slen - 1].item() == eos_id
-        if slen < batch["src_ids"].size(1):
-            assert (batch["src_ids"][i, slen:] == pad_id).all()
-        assert batch["tgt_input_ids"][i, 0].item() == bos_id
-        assert batch["tgt_output_ids"][i, tlen - 1].item() == eos_id
+        assert src_ids[i, 0].item() == bos_id
+        assert src_ids[i, slen - 1].item() == eos_id
+        if slen < src_ids.size(1):
+            assert (src_ids[i, slen:] == pad_id).all()
+        assert tgt_in[i, 0].item() == bos_id
+        assert tgt_out[i, tlen - 1].item() == eos_id
+
+    shift_mask = tgt_in[:, 1:] != pad_id
+    assert torch.equal(tgt_in[:, 1:][shift_mask], tgt_out[:, :-1][shift_mask])
 
 
 def evaluate_dataloader_stats(
     processed_dir: Path = Path("data/processed"),
     tokenizer_dir: Path = Path("data/tokenizer"),
-    batch_size: int = 64,
-    max_len: int = DEFAULT_MAX_LEN,
+    batch_size: int = DEFAULT_BATCH_SIZE,
+    max_len: int = DEFAULT_MAX_SEQ_LEN,
 ) -> dict:
     """Kiểm định toàn bộ split và đo mật độ token thực (không bucketing vs. có bucketing)."""
     src_tok = load_tokenizer(tokenizer_dir / "bpe_en.json")
@@ -300,7 +353,12 @@ def evaluate_dataloader_stats(
 
             for batch in loader:
                 if num_batches < 5:
-                    _verify_batch_invariants(batch, src_tok.bos_id, src_tok.eos_id, src_tok.pad_id)
+                    _verify_batch_invariants(
+                        batch,
+                        pad_id=src_tok.pad_id,
+                        bos_id=src_tok.bos_id,
+                        eos_id=src_tok.eos_id,
+                    )
                 total_src_real += int(batch["src_lengths"].sum().item())
                 total_src_cells += batch["src_ids"].numel()
                 total_tgt_real += int(batch["tgt_lengths"].sum().item())

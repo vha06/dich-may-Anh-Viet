@@ -1,2 +1,1 @@
-# src/__init__.py
-# Đánh dấu thư mục src là Python package
+"""Source package for English-Vietnamese Neural Machine Translation."""

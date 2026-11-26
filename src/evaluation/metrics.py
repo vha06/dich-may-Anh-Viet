@@ -6,11 +6,14 @@ import argparse
 import json
 import random
 from pathlib import Path
-from typing import Sequence
+from typing import Any, Sequence
 
 from sacrebleu.metrics import BLEU
 
-from src.data.tokenizer import BaseTokenizer, load_tokenizer
+from src.data.tokenizer import DEFAULT_MAX_SEQ_LEN, BaseTokenizer, load_tokenizer
+
+DEFAULT_TOKENIZE = "13a"
+DEFAULT_SMOOTH_METHOD = "exp"
 
 
 def _normalize_text(text: str) -> str:
@@ -55,18 +58,18 @@ def _format_bleu_result(result, metric: BLEU) -> dict:
 
 
 def compute_corpus_bleu(
-    hypotheses: Sequence[str],
+    predictions: Sequence[str],
     references: Sequence[str] | Sequence[Sequence[str]],
     lowercase: bool = False,
-    tokenize: str = "13a",
-    smooth_method: str = "exp",
+    tokenize: str = DEFAULT_TOKENIZE,
+    smooth_method: str = DEFAULT_SMOOTH_METHOD,
     force: bool = True,
 ) -> dict:
     """Tính điểm SacreBLEU cấp tập dữ liệu (0.0 – 100.0), trả về dict 8 khóa."""
-    if not hypotheses:
-        raise ValueError("hypotheses/predictions không được rỗng!")
+    if not predictions:
+        raise ValueError("predictions không được rỗng!")
 
-    hyps = [_normalize_text(h) for h in hypotheses]
+    hyps = [_normalize_text(str(h)) for h in predictions]
     refs = _normalize_references(references, num_hypotheses=len(hyps))
 
     metric = BLEU(
@@ -83,15 +86,15 @@ compute_bleu = compute_corpus_bleu
 
 
 def compute_sentence_bleu(
-    hypothesis: str,
+    prediction: str,
     reference: str | Sequence[str],
     lowercase: bool = False,
-    tokenize: str = "13a",
-    smooth_method: str = "exp",
+    tokenize: str = DEFAULT_TOKENIZE,
+    smooth_method: str = DEFAULT_SMOOTH_METHOD,
     force: bool = True,
 ) -> dict:
     """Tính điểm SacreBLEU cấp câu đơn lẻ (effective_order=True), trả về dict 8 khóa."""
-    hyp = _normalize_text(hypothesis)
+    hyp = _normalize_text(prediction)
     if isinstance(reference, str):
         refs = [_normalize_text(reference)]
     else:
@@ -111,21 +114,42 @@ def compute_sentence_bleu(
 
 
 def decode_and_compute_bleu(
-    pred_ids,
-    references: Sequence[str] | Sequence[Sequence[str]],
-    tokenizer: BaseTokenizer,
+    predicted_ids: Sequence[Sequence[int]] | Any,
+    references: Sequence[str] | Sequence[Sequence[str]] | Sequence[Sequence[int]] | Any,
+    tgt_tokenizer: BaseTokenizer,
     lowercase: bool = False,
-    tokenize: str = "13a",
-    smooth_method: str = "exp",
+    tokenize: str = DEFAULT_TOKENIZE,
+    smooth_method: str = DEFAULT_SMOOTH_METHOD,
     force: bool = True,
 ) -> dict:
-    """Giải mã Tensor/danh sách ID dự đoán bằng tokenizer và chấm SacreBLEU."""
+    """Giải mã Tensor/danh sách ID dự đoán bằng tgt_tokenizer và chấm SacreBLEU."""
+    raw_preds = (
+        predicted_ids.tolist() if hasattr(predicted_ids, "tolist") else list(predicted_ids)
+    )
+    if not raw_preds:
+        raise ValueError("predicted_ids không được rỗng!")
+
     predictions = [
-        tokenizer.decode(row, skip_special_tokens=True) for row in pred_ids
+        tgt_tokenizer.decode(row, skip_special_tokens=True) for row in raw_preds
     ]
+
+    raw_refs = references.tolist() if hasattr(references, "tolist") else list(references)
+    if not raw_refs:
+        raise ValueError("references không được rỗng!")
+
+    first_ref = raw_refs[0]
+    if isinstance(first_ref, str) or (
+        isinstance(first_ref, Sequence) and len(first_ref) > 0 and isinstance(first_ref[0], str)
+    ):
+        resolved_refs: Sequence[str] | Sequence[Sequence[str]] = raw_refs
+    else:
+        resolved_refs = [
+            tgt_tokenizer.decode(seq, skip_special_tokens=True) for seq in raw_refs
+        ]
+
     return compute_corpus_bleu(
         predictions,
-        references,
+        resolved_refs,
         lowercase=lowercase,
         tokenize=tokenize,
         smooth_method=smooth_method,
@@ -141,7 +165,7 @@ def _read_lines(path: Path) -> list[str]:
 def evaluate_split_sanity(
     processed_dir: Path = Path("data/processed"),
     tokenizer_path: Path = Path("data/tokenizer/bpe_vi.json"),
-    max_len: int = 128,
+    max_len: int = DEFAULT_MAX_SEQ_LEN,
     seed: int = 42,
 ) -> dict:
     """Chạy bộ kiểm định SacreBLEU chuẩn nhóm trên tập val.vi, test.vi và mức câu đơn."""
@@ -231,7 +255,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Kiểm định độ đo SacreBLEU.")
     parser.add_argument("--processed-dir", type=Path, default=Path("data/processed"))
     parser.add_argument("--tokenizer-path", type=Path, default=Path("data/tokenizer/bpe_vi.json"))
-    parser.add_argument("--max-len", type=int, default=128)
+    parser.add_argument("--max-len", type=int, default=DEFAULT_MAX_SEQ_LEN)
     parser.add_argument("--seed", type=int, default=42)
     return parser.parse_args()
 
