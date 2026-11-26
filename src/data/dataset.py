@@ -1,19 +1,17 @@
-"""PyTorch Dataset and dynamic-padding DataLoader for English-Vietnamese NMT."""
+"""PyTorch Dataset và DataLoader chuẩn nhóm cho IWSLT'15 En–Vi."""
 
 from __future__ import annotations
 
-import argparse
+import functools
 import json
 import random
-import sys
-from functools import partial
 from pathlib import Path
-from typing import Any, Iterator, Sequence
 
 import torch
+from torch import Tensor
+from torch.nn.utils.rnn import pad_sequence
 from torch.utils.data import DataLoader, Dataset, Sampler
 
-from src.data.preprocess import _length_summary
 from src.data.tokenizer import (
     BOS_ID,
     DEFAULT_MAX_SEQ_LEN,
@@ -24,193 +22,157 @@ from src.data.tokenizer import (
 )
 
 DEFAULT_BATCH_SIZE = 64
+DEFAULT_MAX_LEN = DEFAULT_MAX_SEQ_LEN
 
 
 class TranslationDataset(Dataset):
-    """Parallel corpus dataset wrapping BaseTokenizer contracts for NMT training/eval."""
+    """Dataset chứa các cặp câu (Anh, Việt) với tiền mã hóa và lưu văn bản gốc."""
 
     def __init__(
         self,
         src_path: str | Path,
         tgt_path: str | Path,
         src_tokenizer: BaseTokenizer,
-        tgt_tokenizer: BaseTokenizer,
+        tgt_tokenizer: BaseTokenizer | None = None,
         max_len: int = DEFAULT_MAX_SEQ_LEN,
         pre_tokenize: bool = True,
     ) -> None:
         self.src_path = Path(src_path)
         self.tgt_path = Path(tgt_path)
         if not self.src_path.exists():
-            raise FileNotFoundError(f"Khong tim thay file nguon: {self.src_path}")
+            raise FileNotFoundError(f"Không tìm thấy file nguồn: {self.src_path}")
         if not self.tgt_path.exists():
-            raise FileNotFoundError(f"Khong tim thay file dich: {self.tgt_path}")
+            raise FileNotFoundError(f"Không tìm thấy file đích: {self.tgt_path}")
         if max_len < 2:
-            raise ValueError(f"max_len phai >= 2 de chua <bos> va <eos>, nhan duoc {max_len}")
-        if src_tokenizer.pad_id != tgt_tokenizer.pad_id:
+            raise ValueError(f"max_len phải >= 2 để chứa <bos> và <eos>, nhận được {max_len}")
+
+        resolved_tgt_tok = tgt_tokenizer if tgt_tokenizer is not None else src_tokenizer
+        if src_tokenizer.pad_id != resolved_tgt_tok.pad_id:
             raise ValueError(
-                f"pad_id khong khop giua src ({src_tokenizer.pad_id}) va tgt ({tgt_tokenizer.pad_id})"
+                f"pad_id không khớp giữa src ({src_tokenizer.pad_id}) và tgt ({resolved_tgt_tok.pad_id})"
             )
 
-        self.src_tokenizer = src_tokenizer
-        self.tgt_tokenizer = tgt_tokenizer
-        self.max_len = max_len
-        self.pre_tokenize = pre_tokenize
-        self.pad_id = src_tokenizer.pad_id
-
-        with self.src_path.open("r", encoding="utf-8") as f_src:
-            self.src_lines = [line.rstrip("\r\n") for line in f_src]
-        with self.tgt_path.open("r", encoding="utf-8") as f_tgt:
-            self.tgt_lines = [line.rstrip("\r\n") for line in f_tgt]
+        with self.src_path.open("r", encoding="utf-8") as f:
+            self.src_lines = [line.rstrip("\r\n") for line in f]
+        with self.tgt_path.open("r", encoding="utf-8") as f:
+            self.tgt_lines = [line.rstrip("\r\n") for line in f]
 
         if len(self.src_lines) != len(self.tgt_lines):
             raise ValueError(
-                f"So dong khong khop: {self.src_path}={len(self.src_lines)}, "
+                f"Số dòng không khớp: {self.src_path}={len(self.src_lines)}, "
                 f"{self.tgt_path}={len(self.tgt_lines)}"
             )
         if not self.src_lines:
-            raise ValueError(f"Du lieu rong tai {self.src_path}")
+            raise ValueError(f"Dữ liệu rỗng tại {self.src_path}")
 
-        self._src_ids: list[list[int]] | None = None
-        self._tgt_ids: list[list[int]] | None = None
+        self.src_tokenizer = src_tokenizer
+        self.tgt_tokenizer = resolved_tgt_tok
+        self.max_len = max_len
+        self.pre_tokenize = pre_tokenize
+        self.pad_id = self.src_tokenizer.pad_id
+
+        self.data: list[tuple[list[int], list[int]]] = []
+        if pre_tokenize:
+            for en, vi in zip(self.src_lines, self.tgt_lines):
+                src_ids = self.src_tokenizer.encode(en, add_special_tokens=True, max_len=self.max_len)
+                tgt_ids = self.tgt_tokenizer.encode(vi, add_special_tokens=True, max_len=self.max_len)
+                self.data.append((src_ids, tgt_ids))
+
+    def get_raw_pair(self, idx: int) -> tuple[str, str]:
+        """Lấy cặp câu văn bản gốc (chưa cắt) để chấm SacreBLEU chuẩn."""
+        return self.src_lines[idx], self.tgt_lines[idx]
+
+    @property
+    def src_lengths(self) -> list[int]:
         if self.pre_tokenize:
-            self._src_ids = [
-                self.src_tokenizer.encode(
-                    line, add_special_tokens=True, max_len=self.max_len
-                )
-                for line in self.src_lines
-            ]
-            self._tgt_ids = [
-                self.tgt_tokenizer.encode(
-                    line, add_special_tokens=True, max_len=self.max_len
-                )
-                for line in self.tgt_lines
-            ]
+            return [len(src_ids) for src_ids, _ in self.data]
+        return [
+            len(self.src_tokenizer.encode(s, add_special_tokens=True, max_len=self.max_len))
+            for s in self.src_lines
+        ]
 
     def __len__(self) -> int:
         return len(self.src_lines)
 
-    def __getitem__(self, idx: int) -> dict[str, list[int]]:
-        if self._src_ids is not None and self._tgt_ids is not None:
-            return {
-                "src_ids": self._src_ids[idx],
-                "tgt_ids": self._tgt_ids[idx],
-            }
-        return {
-            "src_ids": self.src_tokenizer.encode(
+    def __getitem__(self, idx: int) -> tuple[Tensor, Tensor]:
+        if self.pre_tokenize:
+            src_ids, tgt_ids = self.data[idx]
+        else:
+            src_ids = self.src_tokenizer.encode(
                 self.src_lines[idx], add_special_tokens=True, max_len=self.max_len
-            ),
-            "tgt_ids": self.tgt_tokenizer.encode(
+            )
+            tgt_ids = self.tgt_tokenizer.encode(
                 self.tgt_lines[idx], add_special_tokens=True, max_len=self.max_len
-            ),
-        }
-
-    def get_raw_pair(self, idx: int) -> tuple[str, str]:
-        """Return original (src_text, tgt_text) pair at index idx for inspection/eval."""
-        return self.src_lines[idx], self.tgt_lines[idx]
-
-    def get_lengths(self) -> list[int]:
-        """Return max(src_len, tgt_len) per sentence pair for length bucketing."""
-        if self._src_ids is not None and self._tgt_ids is not None:
-            return [
-                max(len(s), len(t))
-                for s, t in zip(self._src_ids, self._tgt_ids)
-            ]
-        return [
-            max(len(s.split()), len(t.split()))
-            for s, t in zip(self.src_lines, self.tgt_lines)
-        ]
+            )
+        return (
+            torch.tensor(src_ids, dtype=torch.long),
+            torch.tensor(tgt_ids, dtype=torch.long),
+        )
 
 
 def collate_translation_batch(
-    batch: Sequence[dict[str, list[int]]],
+    batch: list[tuple[Tensor, Tensor]],
     pad_id: int = PAD_ID,
-) -> dict[str, torch.Tensor]:
-    """Pad a batch dynamically to (S_max, T_max) and apply 1-step Teacher Forcing shift."""
-    if not batch:
-        raise ValueError("Batch khong duoc rong.")
-
-    batch_size = len(batch)
-    src_seqs: list[list[int]] = []
-    tgt_in_seqs: list[list[int]] = []
-    tgt_out_seqs: list[list[int]] = []
+) -> dict[str, Tensor]:
+    """Đệm động cấp module và dịch lệch Teacher Forcing, trả về dict 5 khóa cố định."""
+    src_list: list[Tensor] = []
+    tgt_in_list: list[Tensor] = []
+    tgt_out_list: list[Tensor] = []
     src_lengths: list[int] = []
     tgt_lengths: list[int] = []
 
-    for item in batch:
-        src = item["src_ids"]
-        tgt = item["tgt_ids"]
-        if len(tgt) < 2:
-            raise ValueError(
-                f"Chuoi dich phai co it nhat 2 token (<bos>, <eos>), nhan duoc do dai {len(tgt)}"
-            )
-
-        # Teacher Forcing shift: tgt_input = [<bos>, y1..ym], tgt_output = [y1..ym, <eos>]
+    for src, tgt in batch:
+        src_list.append(src)
+        src_lengths.append(src.size(0))
         tgt_in = tgt[:-1]
         tgt_out = tgt[1:]
-
-        src_seqs.append(src)
-        tgt_in_seqs.append(tgt_in)
-        tgt_out_seqs.append(tgt_out)
-        src_lengths.append(len(src))
-        tgt_lengths.append(len(tgt_in))
-
-    s_max = max(src_lengths)
-    t_max = max(tgt_lengths)
-
-    src_tensor = torch.full((batch_size, s_max), pad_id, dtype=torch.long)
-    tgt_input_tensor = torch.full((batch_size, t_max), pad_id, dtype=torch.long)
-    tgt_output_tensor = torch.full((batch_size, t_max), pad_id, dtype=torch.long)
-
-    for i in range(batch_size):
-        s_len = src_lengths[i]
-        t_len = tgt_lengths[i]
-        src_tensor[i, :s_len] = torch.as_tensor(src_seqs[i], dtype=torch.long)
-        tgt_input_tensor[i, :t_len] = torch.as_tensor(tgt_in_seqs[i], dtype=torch.long)
-        tgt_output_tensor[i, :t_len] = torch.as_tensor(tgt_out_seqs[i], dtype=torch.long)
+        tgt_in_list.append(tgt_in)
+        tgt_out_list.append(tgt_out)
+        tgt_lengths.append(tgt_in.size(0))
 
     return {
-        "src_ids": src_tensor,
+        "src_ids": pad_sequence(src_list, batch_first=True, padding_value=pad_id),
         "src_lengths": torch.tensor(src_lengths, dtype=torch.long),
-        "tgt_input_ids": tgt_input_tensor,
-        "tgt_output_ids": tgt_output_tensor,
+        "tgt_input_ids": pad_sequence(tgt_in_list, batch_first=True, padding_value=pad_id),
+        "tgt_output_ids": pad_sequence(tgt_out_list, batch_first=True, padding_value=pad_id),
         "tgt_lengths": torch.tensor(tgt_lengths, dtype=torch.long),
     }
 
 
 class BucketBatchSampler(Sampler[list[int]]):
-    """Group similar-length sentence pairs into batches to minimize dynamic padding."""
+    """Gom các câu có độ dài gần nhau vào cùng batch để giảm tối đa token <pad>."""
 
     def __init__(
         self,
-        lengths: Sequence[int],
+        lengths: list[int],
         batch_size: int,
         shuffle: bool = True,
-        drop_last: bool = False,
+        mega_batch_mult: int = 50,
     ) -> None:
-        if batch_size < 1:
-            raise ValueError(f"batch_size phai >= 1, nhan duoc {batch_size}")
+        self.lengths = lengths
         self.batch_size = batch_size
         self.shuffle = shuffle
-        self.drop_last = drop_last
+        self.mega_batch_size = batch_size * mega_batch_mult
 
-        sorted_indices = sorted(range(len(lengths)), key=lambda i: lengths[i])
-        batches = [
-            sorted_indices[i : i + batch_size]
-            for i in range(0, len(sorted_indices), batch_size)
-        ]
-        if drop_last and batches and len(batches[-1]) < batch_size:
-            batches.pop()
-        self.batches = batches
+    def __iter__(self):
+        indices = list(range(len(self.lengths)))
+        if self.shuffle:
+            random.shuffle(indices)
 
-    def __iter__(self) -> Iterator[list[int]]:
-        batches = list(self.batches)
+        batches: list[list[int]] = []
+        for i in range(0, len(indices), self.mega_batch_size):
+            mega = indices[i : i + self.mega_batch_size]
+            mega.sort(key=lambda idx: self.lengths[idx])
+            for j in range(0, len(mega), self.batch_size):
+                batches.append(mega[j : j + self.batch_size])
+
         if self.shuffle:
             random.shuffle(batches)
-        for batch in batches:
-            yield batch
+
+        yield from batches
 
     def __len__(self) -> int:
-        return len(self.batches)
+        return (len(self.lengths) + self.batch_size - 1) // self.batch_size
 
 
 def create_dataloader(
@@ -222,21 +184,21 @@ def create_dataloader(
     drop_last: bool = False,
     use_bucketing: bool = False,
 ) -> DataLoader:
-    """Wrap TranslationDataset in a PyTorch DataLoader with dynamic batch padding."""
-    collate_fn = partial(collate_translation_batch, pad_id=dataset.pad_id)
+    """Bọc TranslationDataset vào PyTorch DataLoader hỗ trợ dynamic padding và bucketing."""
+    collate_fn = functools.partial(collate_translation_batch, pad_id=dataset.pad_id)
+
     if use_bucketing:
-        sampler = BucketBatchSampler(
-            lengths=dataset.get_lengths(),
+        batch_sampler = BucketBatchSampler(
+            lengths=dataset.src_lengths,
             batch_size=batch_size,
             shuffle=shuffle,
-            drop_last=drop_last,
         )
         return DataLoader(
             dataset,
-            batch_sampler=sampler,
+            batch_sampler=batch_sampler,
             num_workers=num_workers,
-            pin_memory=pin_memory,
             collate_fn=collate_fn,
+            pin_memory=pin_memory,
         )
 
     return DataLoader(
@@ -244,297 +206,178 @@ def create_dataloader(
         batch_size=batch_size,
         shuffle=shuffle,
         num_workers=num_workers,
+        collate_fn=collate_fn,
         pin_memory=pin_memory,
         drop_last=drop_last,
-        collate_fn=collate_fn,
+    )
+
+
+def build_dataloader(
+    src_path: str | Path,
+    tgt_path: str | Path,
+    src_tokenizer: BaseTokenizer,
+    tgt_tokenizer: BaseTokenizer | None = None,
+    batch_size: int = DEFAULT_BATCH_SIZE,
+    shuffle: bool = True,
+    use_bucketing: bool = False,
+    num_workers: int = 0,
+    max_len: int = DEFAULT_MAX_SEQ_LEN,
+    pin_memory: bool = False,
+    pre_tokenize: bool = True,
+) -> DataLoader:
+    """Tạo DataLoader đơn lẻ từ cặp đường dẫn file nguồn/đích."""
+    dataset = TranslationDataset(
+        src_path=src_path,
+        tgt_path=tgt_path,
+        src_tokenizer=src_tokenizer,
+        tgt_tokenizer=tgt_tokenizer,
+        max_len=max_len,
+        pre_tokenize=pre_tokenize,
+    )
+    return create_dataloader(
+        dataset,
+        batch_size=batch_size,
+        shuffle=shuffle,
+        num_workers=num_workers,
+        pin_memory=pin_memory,
+        use_bucketing=use_bucketing,
     )
 
 
 def build_dataloaders(
     processed_dir: str | Path,
     src_tokenizer: BaseTokenizer,
-    tgt_tokenizer: BaseTokenizer,
+    tgt_tokenizer: BaseTokenizer | None = None,
     batch_size: int = DEFAULT_BATCH_SIZE,
     max_len: int = DEFAULT_MAX_SEQ_LEN,
-    pre_tokenize: bool = True,
+    use_bucketing: bool = False,
     num_workers: int = 0,
     pin_memory: bool = False,
-    use_bucketing: bool = False,
+    pre_tokenize: bool = True,
 ) -> dict[str, DataLoader]:
-    """Construct train (shuffled, optional bucketing) and val/test (deterministic) DataLoaders."""
-    proc_dir = Path(processed_dir)
-    split_configs = (
-        ("train", True, use_bucketing),
-        ("val", False, False),
-        ("test", False, False),
-    )
-
+    """Tạo trọn bộ 3 DataLoader (train / val / test); val & test luôn khóa shuffle=False."""
+    pdir = Path(processed_dir)
     loaders: dict[str, DataLoader] = {}
-    for split_name, shuffle, split_bucketing in split_configs:
-        dataset = TranslationDataset(
-            src_path=proc_dir / f"{split_name}.en",
-            tgt_path=proc_dir / f"{split_name}.vi",
-            src_tokenizer=src_tokenizer,
-            tgt_tokenizer=tgt_tokenizer,
-            max_len=max_len,
-            pre_tokenize=pre_tokenize,
-        )
-        loaders[split_name] = create_dataloader(
-            dataset,
-            batch_size=batch_size,
-            shuffle=shuffle,
-            num_workers=num_workers,
-            pin_memory=pin_memory,
-            use_bucketing=split_bucketing,
-        )
+    configs = {
+        "train": (True, use_bucketing),
+        "val": (False, False),
+        "test": (False, False),
+    }
+    for split, (shuffle, bucketing) in configs.items():
+        en_p = pdir / f"{split}.en"
+        vi_p = pdir / f"{split}.vi"
+        if en_p.exists() and vi_p.exists():
+            dataset = TranslationDataset(
+                src_path=en_p,
+                tgt_path=vi_p,
+                src_tokenizer=src_tokenizer,
+                tgt_tokenizer=tgt_tokenizer,
+                max_len=max_len,
+                pre_tokenize=pre_tokenize,
+            )
+            loaders[split] = create_dataloader(
+                dataset,
+                batch_size=batch_size,
+                shuffle=shuffle,
+                num_workers=num_workers,
+                pin_memory=pin_memory,
+                use_bucketing=bucketing,
+            )
     return loaders
 
 
 def _verify_batch_invariants(
-    batch: dict[str, torch.Tensor],
-    pad_id: int,
-    bos_id: int,
-    eos_id: int,
+    batch: dict[str, Tensor],
+    pad_id: int = PAD_ID,
+    bos_id: int = BOS_ID,
+    eos_id: int = EOS_ID,
 ) -> None:
-    """Assert structural invariants of a collated batch tensor dictionary."""
+    """Kiểm tra hợp đồng 5 khóa, dtype, độ dài, vị trí <bos>/<eos> và Teacher Forcing shift."""
+    expected_keys = {"src_ids", "src_lengths", "tgt_input_ids", "tgt_output_ids", "tgt_lengths"}
+    assert set(batch.keys()) == expected_keys
+    for val in batch.values():
+        assert val.dtype == torch.long
+
+    bsz = batch["src_ids"].size(0)
+    assert batch["src_lengths"].shape == (bsz,)
+    assert batch["tgt_lengths"].shape == (bsz,)
+    assert batch["tgt_input_ids"].shape == batch["tgt_output_ids"].shape
+
     src_ids = batch["src_ids"]
-    src_lengths = batch["src_lengths"]
     tgt_in = batch["tgt_input_ids"]
     tgt_out = batch["tgt_output_ids"]
-    tgt_lengths = batch["tgt_lengths"]
 
-    bsz = src_ids.size(0)
-    row_idx = torch.arange(bsz)
+    for i in range(bsz):
+        slen = int(batch["src_lengths"][i].item())
+        tlen = int(batch["tgt_lengths"][i].item())
+        assert src_ids[i, 0].item() == bos_id
+        assert src_ids[i, slen - 1].item() == eos_id
+        if slen < src_ids.size(1):
+            assert (src_ids[i, slen:] == pad_id).all()
+        assert tgt_in[i, 0].item() == bos_id
+        assert tgt_out[i, tlen - 1].item() == eos_id
 
-    if not torch.all(src_ids[:, 0] == bos_id):
-        raise AssertionError("Moi cau nguon phai bat dau bang <bos>.")
-    if not torch.all(tgt_in[:, 0] == bos_id):
-        raise AssertionError("Moi tgt_input_ids phai bat dau bang <bos>.")
-    if not torch.all(src_ids[row_idx, src_lengths - 1] == eos_id):
-        raise AssertionError("Vi tri cuoi cua src_ids phai la <eos>.")
-    if not torch.all(tgt_out[row_idx, tgt_lengths - 1] == eos_id):
-        raise AssertionError("Vi tri cuoi cua tgt_output_ids phai la <eos>.")
-
-    # Verify Teacher Forcing 1-step shift over all content tokens
     shift_mask = tgt_in[:, 1:] != pad_id
-    if not torch.equal(tgt_in[:, 1:][shift_mask], tgt_out[:, :-1][shift_mask]):
-        raise AssertionError("tgt_input_ids va tgt_output_ids khong lech dung 1 buoc Teacher Forcing.")
-
-    # Verify padding counts match length tensors exactly
-    if int((src_ids != pad_id).sum().item()) != int(src_lengths.sum().item()):
-        raise AssertionError("So token thuc cua src_ids khong khop src_lengths.")
-    if int((tgt_in != pad_id).sum().item()) != int(tgt_lengths.sum().item()):
-        raise AssertionError("So token thuc cua tgt_input_ids khong khop tgt_lengths.")
-    if int((tgt_out != pad_id).sum().item()) != int(tgt_lengths.sum().item()):
-        raise AssertionError("So token thuc cua tgt_output_ids khong khop tgt_lengths.")
+    assert torch.equal(tgt_in[:, 1:][shift_mask], tgt_out[:, :-1][shift_mask])
 
 
 def evaluate_dataloader_stats(
-    dataloader: DataLoader,
-    static_max_len: int = DEFAULT_MAX_SEQ_LEN,
-) -> dict[str, Any]:
-    """Iterate over a DataLoader, verify invariants, and compute dynamic-padding efficiency."""
-    dataset = dataloader.dataset
-    if not isinstance(dataset, TranslationDataset):
-        raise TypeError("DataLoader phai boc ben trong TranslationDataset.")
+    processed_dir: Path = Path("data/processed"),
+    tokenizer_dir: Path = Path("data/tokenizer"),
+    batch_size: int = DEFAULT_BATCH_SIZE,
+    max_len: int = DEFAULT_MAX_SEQ_LEN,
+) -> dict:
+    """Kiểm định toàn bộ split và đo mật độ token thực (không bucketing vs. có bucketing)."""
+    src_tok = load_tokenizer(tokenizer_dir / "bpe_en.json")
+    tgt_tok = load_tokenizer(tokenizer_dir / "bpe_vi.json")
 
-    pad_id = dataset.pad_id
-    bos_id = dataset.src_tokenizer.bos_id
-    eos_id = dataset.src_tokenizer.eos_id
+    stats: dict = {"batch_size": batch_size, "max_len": max_len, "modes": {}}
 
-    batch_s_max_list: list[int] = []
-    batch_t_max_list: list[int] = []
-    num_samples = 0
-    src_real_tokens = 0
-    tgt_real_tokens = 0
-    src_dynamic_total_cells = 0
-    tgt_dynamic_total_cells = 0
-
-    for batch in dataloader:
-        _verify_batch_invariants(batch, pad_id=pad_id, bos_id=bos_id, eos_id=eos_id)
-
-        bsz, s_max = batch["src_ids"].shape
-        _, t_max = batch["tgt_input_ids"].shape
-
-        num_samples += bsz
-        batch_s_max_list.append(int(s_max))
-        batch_t_max_list.append(int(t_max))
-
-        src_real_tokens += int(batch["src_lengths"].sum().item())
-        tgt_real_tokens += int(batch["tgt_lengths"].sum().item())
-        src_dynamic_total_cells += bsz * s_max
-        tgt_dynamic_total_cells += bsz * t_max
-
-    src_static_total_cells = num_samples * static_max_len
-    tgt_static_total_cells = num_samples * (static_max_len - 1)
-
-    resolved_batch_size = dataloader.batch_size
-    if resolved_batch_size is None and dataloader.batch_sampler is not None:
-        resolved_batch_size = getattr(dataloader.batch_sampler, "batch_size", None)
-
-    return {
-        "num_samples": num_samples,
-        "num_batches": len(batch_s_max_list),
-        "batch_size": resolved_batch_size,
-        "batch_s_max": _length_summary(batch_s_max_list),
-        "batch_t_max": _length_summary(batch_t_max_list),
-        "src_real_tokens": src_real_tokens,
-        "src_dynamic_total_cells": src_dynamic_total_cells,
-        "src_static_total_cells": src_static_total_cells,
-        "src_real_token_density_dynamic_pct": round(
-            100.0 * src_real_tokens / src_dynamic_total_cells, 2
-        ),
-        "src_real_token_density_static_pct": round(
-            100.0 * src_real_tokens / src_static_total_cells, 2
-        ),
-        "src_cells_saved_vs_static_pct": round(
-            100.0 * (src_static_total_cells - src_dynamic_total_cells) / src_static_total_cells,
-            2,
-        ),
-        "tgt_real_tokens": tgt_real_tokens,
-        "tgt_dynamic_total_cells": tgt_dynamic_total_cells,
-        "tgt_static_total_cells": tgt_static_total_cells,
-        "tgt_real_token_density_dynamic_pct": round(
-            100.0 * tgt_real_tokens / tgt_dynamic_total_cells, 2
-        ),
-        "tgt_real_token_density_static_pct": round(
-            100.0 * tgt_real_tokens / tgt_static_total_cells, 2
-        ),
-        "tgt_cells_saved_vs_static_pct": round(
-            100.0 * (tgt_static_total_cells - tgt_dynamic_total_cells) / tgt_static_total_cells,
-            2,
-        ),
-    }
-
-
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Kiem thu TranslationDataset & DataLoader voi Dynamic Padding"
-    )
-    parser.add_argument(
-        "--processed-dir",
-        type=Path,
-        default=Path("data/processed"),
-        help="Thu muc chua train/val/test (.en, .vi) da lam sach",
-    )
-    parser.add_argument(
-        "--tokenizer-dir",
-        type=Path,
-        default=Path("data/tokenizer"),
-        help="Thu muc chua bpe_en.json va bpe_vi.json",
-    )
-    parser.add_argument(
-        "--batch-size",
-        type=int,
-        default=DEFAULT_BATCH_SIZE,
-        help="Kich thuoc moi lo (mac dinh: 64)",
-    )
-    parser.add_argument(
-        "--max-len",
-        type=int,
-        default=DEFAULT_MAX_SEQ_LEN,
-        help="Do dai toi da moi chuoi bao gom <bos> va <eos> (mac dinh: 128)",
-    )
-    parser.add_argument(
-        "--seed",
-        type=int,
-        default=42,
-        help="Random seed co dinh thu tu shuffle tap train khi thong ke (mac dinh: 42)",
-    )
-    parser.add_argument(
-        "--use-bucketing",
-        action="store_true",
-        help="Bat BucketBatchSampler gom nhom cau cung do dai tren tap train",
-    )
-    return parser.parse_args()
-
-
-def main() -> int:
-    if hasattr(sys.stdout, "reconfigure"):
-        sys.stdout.reconfigure(encoding="utf-8")
-
-    args = parse_args()
-    random.seed(args.seed)
-    torch.manual_seed(args.seed)
-
-    src_tok = load_tokenizer(args.tokenizer_dir / "bpe_en.json", tokenizer_type="bpe")
-    tgt_tok = load_tokenizer(args.tokenizer_dir / "bpe_vi.json", tokenizer_type="bpe")
-
-    print("=== Khoi tao TranslationDataset & DataLoader (IWSLT'15 En-Vi) ===")
-    loaders = build_dataloaders(
-        processed_dir=args.processed_dir,
-        src_tokenizer=src_tok,
-        tgt_tokenizer=tgt_tok,
-        batch_size=args.batch_size,
-        max_len=args.max_len,
-        pre_tokenize=True,
-        use_bucketing=args.use_bucketing,
-    )
-
-    sample_batch = next(iter(loaders["val"]))
-    print("\n[Mau Batch dau tien tren tap val]")
-    for key, tensor in sample_batch.items():
-        print(f"  - {key:<15}: shape={tuple(tensor.shape)}, dtype={tensor.dtype}")
-
-    first_src = sample_batch["src_ids"][0]
-    first_tgt_in = sample_batch["tgt_input_ids"][0]
-    first_tgt_out = sample_batch["tgt_output_ids"][0]
-    t_len = int(sample_batch["tgt_lengths"][0].item())
-    s_len = int(sample_batch["src_lengths"][0].item())
-
-    sample_inspection = {
-        "val_first_batch_shapes": {k: list(v.shape) for k, v in sample_batch.items()},
-        "first_sample_src_len": s_len,
-        "first_sample_tgt_shifted_len": t_len,
-        "first_sample_src_ids": first_src[:s_len].tolist(),
-        "first_sample_tgt_input_ids": first_tgt_in[:t_len].tolist(),
-        "first_sample_tgt_output_ids": first_tgt_out[:t_len].tolist(),
-        "first_sample_src_decoded": src_tok.decode(first_src, skip_special_tokens=True),
-        "first_sample_tgt_decoded": tgt_tok.decode(first_tgt_out, skip_special_tokens=True),
-    }
-
-    print(f"  - Cau nguon [0] (len={s_len}): {sample_inspection['first_sample_src_decoded']}")
-    print(f"  - Cau dich  [0] (len={t_len}): {sample_inspection['first_sample_tgt_decoded']}")
-
-    report: dict[str, Any] = {
-        "config": {
-            "batch_size": args.batch_size,
-            "max_len": args.max_len,
-            "seed": args.seed,
-            "pad_id": PAD_ID,
-            "bos_id": BOS_ID,
-            "eos_id": EOS_ID,
-            "pre_tokenize": True,
-            "use_bucketing": args.use_bucketing,
-        },
-        "sample_inspection": sample_inspection,
-        "splits": {},
-    }
-
-    print("\n[Thong ke hieu qua Dynamic Padding qua cac tap]")
-    for split_name in ("train", "val", "test"):
-        split_stats = evaluate_dataloader_stats(
-            loaders[split_name], static_max_len=args.max_len
+    for use_bucketing in (False, True):
+        mode_name = "bucketed" if use_bucketing else "standard"
+        loaders = build_dataloaders(
+            processed_dir=processed_dir,
+            src_tokenizer=src_tok,
+            tgt_tokenizer=tgt_tok,
+            batch_size=batch_size,
+            max_len=max_len,
+            use_bucketing=use_bucketing,
         )
-        report["splits"][split_name] = split_stats
-        s_sum = split_stats["batch_s_max"]
-        t_sum = split_stats["batch_t_max"]
-        print(
-            f"  - {split_name:<5}: {split_stats['num_samples']:,} cau | "
-            f"{split_stats['num_batches']:,} batches | "
-            f"S_max(mean={s_sum['mean']}, median={s_sum['median']}, max={s_sum['max']}) | "
-            f"T_max(mean={t_sum['mean']}, median={t_sum['median']}, max={t_sum['max']}) | "
-            f"Tiet kiem cell: src={split_stats['src_cells_saved_vs_static_pct']}%, "
-            f"tgt={split_stats['tgt_cells_saved_vs_static_pct']}%"
-        )
+        mode_stats: dict = {}
+        for split_name, loader in loaders.items():
+            total_src_real = 0
+            total_src_cells = 0
+            total_tgt_real = 0
+            total_tgt_cells = 0
+            num_batches = 0
 
-    out_path = args.processed_dir / "dataloader_stats.json"
-    out_path.write_text(
-        json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8"
-    )
-    print(f"\nDa luu thong ke chi tiet tai: {out_path}")
-    return 0
+            for batch in loader:
+                if num_batches < 5:
+                    _verify_batch_invariants(
+                        batch,
+                        pad_id=src_tok.pad_id,
+                        bos_id=src_tok.bos_id,
+                        eos_id=src_tok.eos_id,
+                    )
+                total_src_real += int(batch["src_lengths"].sum().item())
+                total_src_cells += batch["src_ids"].numel()
+                total_tgt_real += int(batch["tgt_lengths"].sum().item())
+                total_tgt_cells += batch["tgt_input_ids"].numel()
+                num_batches += 1
+
+            mode_stats[split_name] = {
+                "batches": num_batches,
+                "src_token_density": round(total_src_real / max(total_src_cells, 1), 4),
+                "tgt_token_density": round(total_tgt_real / max(total_tgt_cells, 1), 4),
+            }
+        stats["modes"][mode_name] = mode_stats
+
+    out_path = processed_dir / "dataloader_stats.json"
+    out_path.write_text(json.dumps(stats, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    print(f"Đã kiểm định và lưu thống kê DataLoader tại: {out_path}")
+    print(json.dumps(stats, indent=2, ensure_ascii=False))
+    return stats
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    evaluate_dataloader_stats()

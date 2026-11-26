@@ -51,7 +51,7 @@ Dữ liệu thô trong `data/raw/` đi qua quy trình làm sạch gồm 4 bướ
 ### Bước 4: Chiến lược lọc phân biệt giữa Tập Huấn luyện và Tập Đánh giá
 - **Đối với tập `train` (`is_train=True`):**
   - Loại bỏ các cặp câu có câu nguồn hoặc câu đích bị rỗng sau khi làm sạch (**151 cặp**).
-  - Lọc bỏ các cặp câu quá dài vượt ngưỡng mặc định **`max_words = 128` từ** ở nguồn hoặc đích (**218 cặp**; cấu hình qua `--max-words` hoặc alias `--max-len`, hỗ trợ truyền `<= 0` nếu muốn tắt bước lọc độ dài).
+  - Lọc bỏ các cặp câu quá dài vượt ngưỡng mặc định **`max_words = 128` từ** ở nguồn hoặc đích (**218 cặp**; cấu hình qua `--max-words`, hỗ trợ truyền `<= 0` nếu muốn tắt bước lọc độ dài).
   - Loại bỏ các cặp câu trùng lặp hoàn toàn `(en, vi)` bằng tập hợp `seen_pairs` (**1,006 cặp** — chủ yếu là các câu kết thúc bài nói như *"Thank you ."* — *"Cảm ơn ."*) để tránh mô hình bị thiên lệch (overfitting) vào mẫu lặp.
   - Tổng sau lọc: **`131,942` cặp câu** (`133,317 - 151 - 218 - 1,006`).
 - **Đối với tập `val` (`tst2012`) và `test` (`tst2013`) (`is_train=False`):**
@@ -66,13 +66,13 @@ Số liệu trích xuất trực tiếp từ `data/processed/stats.json`:
 
 ### 3.1. Bảng thống kê quy mô, phân bố độ dài câu và tỷ lệ độ dài (tính theo số từ)
 
-| Tập | Số cặp gốc | Sau làm sạch | Đã loại bỏ | Ngôn ngữ | Mean | Median (p50) | p95 | p99 | Min | Max | Tỷ lệ VI/EN (Bất thường) |
+| Tập | Số cặp gốc | Sau làm sạch | Đã loại bỏ | Ngôn ngữ | Mean | Median (p50) | p95 | p99 | Min | Max | Tỷ lệ VI/EN (`mean_VI / mean_EN`) |
 | :--- | ---: | ---: | :--- | :---: | ---: | ---: | ---: | ---: | ---: | ---: | :--- |
-| **Train** | 133,317 | **131,942** | 151 rỗng, 218 quá dài (`>128`), 1,006 trùng | EN | 20.24 | 17.0 | 47.0 | 69.0 | 1 | 122 | `mean = 1.24` (`40` câu / `0.03%` lệch `>3x` hoặc `<0.33x`) |
+| **Train** | 133,317 | **131,942** | 151 rỗng, 218 quá dài (`>128`), 1,006 trùng | EN | 20.24 | 17.0 | 47.0 | 69.0 | 1 | 122 | `1.22` (`1.2228`) |
 | | | | | VI | 24.75 | 20.0 | 58.0 | 86.0 | 1 | 128 | |
-| **Val** (`tst2012`) | 1,553 | **1,553** | 0 *(giữ 100%)* | EN | 18.02 | 15.0 | 39.0 | 57.0 | 2 | 93 | `mean = 1.25` (`0` câu / `0.0%` bất thường) |
+| **Val** (`tst2012`) | 1,553 | **1,553** | 0 *(giữ 100%)* | EN | 18.02 | 15.0 | 39.0 | 57.0 | 2 | 93 | `1.23` (`1.2253`) |
 | | | | | VI | 22.08 | 19.0 | 46.4 | 69.0 | 2 | 122 | |
-| **Test** (`tst2013`) | 1,268 | **1,268** | 0 *(giữ 100%)* | EN | 21.08 | 18.0 | 48.65 | 67.0 | 2 | 102 | `mean = 1.28` (`0` câu / `0.0%` bất thường) |
+| **Test** (`tst2013`) | 1,268 | **1,268** | 0 *(giữ 100%)* | EN | 21.08 | 18.0 | 48.65 | 67.0 | 2 | 102 | `1.26` (`1.2600`) |
 | | | | | VI | 26.56 | 22.0 | 61.0 | 87.0 | 2 | 123 | |
 
 ### 3.2. Kiểm tra rò rỉ và tách biệt tập dữ liệu (Overlap Check 3 tầng)
@@ -86,7 +86,7 @@ Kiểm tra trùng lặp toàn diện ở cả 3 mức độ: cả cặp `(en, vi
 
 ### 3.3. Ví dụ thực tế minh họa cho từng bước xử lý & thống kê
 
-#### A. Ví dụ chuẩn hóa ký tự (Giải mã HTML entities & Unicode)
+#### A. Ví dụ chuẩn hóa ký tự (Giải mã HTML entities & Unicode — *trích từ tập `val`*)
 - **Mẫu 1:**
   - *Raw EN:* `Imagine the first piece : a man burning his life &apos;s work .`
   - *Clean EN:* `Imagine the first piece : a man burning his life 's work .`
@@ -178,7 +178,7 @@ Sau khi chạy hoàn tất `python -m src.data.preprocess`, toàn bộ dữ li�
    - Tuy nhiên, **95%** số câu ngắn hơn hoặc bằng `47` từ (EN) / `58` từ (VI), và **99%** số câu nằm dưới `69` từ (EN) / `86` từ (VI).
    - Vì độ phức tạp bộ nhớ của cơ chế Self-Attention trong Transformer là $\mathcal{O}(L^2)$, nhóm thống nhất mặc định **`max_words = 128`** ở bước tiền xử lý `train` (kết hợp `max_seq_len = 128` ở mức token BPE) để vừa bao phủ $>99.8\%$ dữ liệu, vừa tránh tràn VRAM GPU.
 2. **Chênh lệch độ dài giữa Tiếng Anh và Tiếng Việt:**
-   - Số lượng từ/tiếng trung bình của tiếng Việt luôn cao hơn tiếng Anh khoảng **22%–28%** (`24.75` vs `20.24` ở `train`, `mean_ratio = 1.24`; `26.56` vs `21.08` ở `test`, `mean_ratio = 1.28`) do tiếng Việt là ngôn ngữ đơn lập, mỗi âm tiết tách rời thành một khoảng trắng (ví dụ một từ tiếng Anh *"freedom"* tương ứng 2 tiếng *"tự do"*). Tỷ lệ câu lệch độ dài bất thường (`>3x` hoặc `<0.33x`) rất thấp, chỉ `40` câu (`0.03%`) ở `train` và `0.0%` ở `val`/`test`.
+   - Số lượng từ/tiếng trung bình của tiếng Việt luôn cao hơn tiếng Anh khoảng **22%–26%** (`24.75` vs `20.24` ở `train`, `length_ratio = 1.22` [`1.2228`]; `22.08` vs `18.02` ở `val`, `length_ratio = 1.23` [`1.2253`]; `26.56` vs `21.08` ở `test`, `length_ratio = 1.26` [`1.2600`]) do tiếng Việt là ngôn ngữ đơn lập, mỗi âm tiết tách rời thành một khoảng trắng (ví dụ một từ tiếng Anh *"freedom"* tương ứng 2 tiếng *"tự do"*).
 3. **Đặc điểm dấu câu đã tách sẵn:**
    - Dữ liệu gốc đã được Moses tách dấu câu bằng khoảng trắng (ví dụ `life 's work .`). Khi huấn luyện bộ tách từ BPE ở bước sau cần lưu ý thiết lập pre-tokenizer phù hợp và kiểm tra bước hậu xử lý (detokenize) trước khi tính SacreBLEU.
 

@@ -29,8 +29,10 @@ Mọi loại bộ tách từ kế thừa từ `BaseTokenizer` đều bắt buộ
 - **Giải mã (`decode(ids, skip_special_tokens=True) -> str`):**
   - Chấp nhận cả `list[int]` lẫn `torch.Tensor` 1 chiều.
   - Khi `skip_special_tokens=True`, tự động **dừng tại token `<eos>` đầu tiên** (loại bỏ triệt để các token rác hoặc `<pad>` phía sau `<eos>`), bỏ qua `<pad>`/`<bos>` và khôi phục lại câu văn hoàn chỉnh.
+- **Ánh xạ đơn lẻ (`id_to_token` & `token_to_id`):** Thuộc hợp đồng `BaseTokenizer`, hỗ trợ chuyển đổi qua lại giữa 1 token ID và chuỗi ký hiệu trên cả BPE lẫn SentencePiece.
 - **Factory mở rộng (`create_tokenizer` & `load_tokenizer`):**
-  - Hỗ trợ `tokenizer_type="bpe"` ngay hiện tại; đã thiết lập sẵn nhánh chờ cho `"sentencepiece"` và `"word"` (tạm thời trả về `NotImplementedError` rõ ràng cho đến khi triển khai phần mở rộng).
+  - Đã cài đặt đầy đủ cả **`"bpe"` (`BPETokenizer`)** và **`"sentencepiece"` / `"spm"` (`SentencePieceTokenizer`**, bọc import `sentencepiece` tùy chọn qua `try ... except ImportError`).
+  - Hàm `load_tokenizer(path)` tự động nhận diện đuôi `.json` (BPE) hoặc `.model` (SentencePiece); các loại chưa hỗ trợ (như `"word"`) trả về `ValueError` rõ ràng.
 
 ---
 
@@ -124,9 +126,9 @@ Kết quả trích xuất trực tiếp từ [`data/tokenizer/tokenizer_stats.js
 | :--- | :--- | ---: | :--- |
 | Model BPE Tiếng Anh | `data/tokenizer/bpe_en.json` | 560,337 bytes (~547.2 KB) | `vocab_size = 8,000`, `pad=0, unk=1, bos=2, eos=3` (đồng bộ `131,942` câu train) |
 | Model BPE Tiếng Việt | `data/tokenizer/bpe_vi.json` | 546,585 bytes (~533.8 KB) | `vocab_size = 8,000`, `pad=0, unk=1, bos=2, eos=3` (đồng bộ `131,942` câu train) |
-| Thống kê đánh giá | `data/tokenizer/tokenizer_stats.json` | 66,014 bytes (~64.5 KB) | Đầy đủ số liệu trên `train`/`val`/`test` |
+| Thống kê đánh giá | `data/tokenizer/tokenizer_stats.json` | — | Lưu `subword_fertility`, `unk_rate`, `roundtrip_rate`, `coverage_max_len_100` và `coverage_max_len_128` trên `train`/`val`/`test` |
 
-Lệnh huấn luyện lại và xuất thống kê từ thư mục gốc dự án:
+Lệnh huấn luyện lại và xuất thống kê từ thư mục gốc dự án *(hàm `compute_tokenizer_stats` tự động đánh giá đồng thời cả `max_len=100` và `max_len=128`)*:
 ```bash
-python -m src.data.tokenizer --vocab-size 8000 --min-frequency 2 --max-len 128
+python -m src.data.tokenizer --vocab-size 8000 --min-frequency 2
 ```

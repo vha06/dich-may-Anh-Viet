@@ -45,9 +45,8 @@ Kết quả trích xuất trực tiếp từ `data/processed/metrics_sanity_stat
 | :--- | :---: | ---: | :---: | :---: | :---: | :--- |
 | **1. Identity** *(Gốc vs Gốc)* | `Val` | **100.00** | 1.0000 | 34,327 / 34,327 | `[100.0, 100.0, 100.0, 100.0]` | Hàm chấm điểm đạt đúng chuẩn tuyệt đối `100.00`. |
 | **1. Identity** *(Gốc vs Gốc)* | `Test` | **100.00** | 1.0000 | 33,722 / 33,722 | `[100.0, 100.0, 100.0, 100.0]` | Hàm chấm điểm đạt đúng chuẩn tuyệt đối `100.00`. |
-| **2a. Oracle BPE Ceiling** (`13a`) | `Val` | **99.99** | 0.9999 | 34,325 / 34,327 | `[100.0, 100.0, 99.99, 99.99]` | Ngưỡng trần lý thuyết tối đa với `BPE 8000` + `max_len=128`. |
-| **2b. Oracle BPE Ceiling** (`none`) | `Val` | **99.99** | 0.9999 | 34,295 / 34,297 | `[100.0, 100.0, 99.99, 99.99]` | Khẳng định kết quả ổn định giữa `tok=13a` và `tok=none`. |
-| **2a. Oracle BPE Ceiling** (`13a`) | `Test` | **99.99** | 1.0000 | 33,722 / 33,722 | `[100.0, 99.99, 99.99, 99.99]` | Chỉ 1 ký tự `<unk>` (`Ōfunato`) làm giảm đúng `0.01%` ở 2–4 gram. |
+| **2. Oracle BPE Ceiling** (`13a`) | `Val` | **99.99** | 0.9999 | 34,325 / 34,327 | `[100.0, 100.0, 99.99, 99.99]` | Ngưỡng trần lý thuyết tối đa với `BPE 8000` + `max_len=128`. |
+| **2. Oracle BPE Ceiling** (`13a`) | `Test` | **99.99** | 1.0000 | 33,722 / 33,722 | `[100.0, 99.99, 99.99, 99.99]` | Chỉ 1 ký tự `<unk>` (`Ōfunato`) làm giảm đúng `0.01%` ở 2–4 gram. |
 | **3. Cắt ngắn 50% độ dài** | `Val` | **35.15** | 0.3515 | 16,781 / 34,327 | `[100.0, 100.0, 100.0, 100.0]` | Chứng minh `BP` phạt nặng (`0.3515`) dù phần đầu khớp 100%. |
 | **3. Cắt ngắn 50% độ dài** | `Test` | **35.33** | 0.3533 | 16,526 / 33,722 | `[100.0, 100.0, 100.0, 100.0]` | `length_ratio = 0.4901` kéo điểm BLEU xuống ~35.3. |
 | **4. Xáo trộn trật tự từ** | `Val` | **1.65** | 1.0000 | 34,327 / 34,327 | `[100.0, 6.17, 0.4, 0.03]` | `p1=100%` nhưng `p2, p3, p4` sụt mạnh $\rightarrow$ BLEU nhạy trật tự từ. |
@@ -61,7 +60,7 @@ Trên câu gốc: *"Hôm nay bầu trời ở Hà Nội rất trong xanh và má
 | `exact_match` | Khớp y nguyên 100% | **100.00** | 1.0000 | `[100.0, 100.0, 100.0, 100.0]` |
 | `one_word_diff` | Đổi 1 từ (`"ở"` $\rightarrow$ `"tại"`) | **78.25** | 1.0000 | `[92.86, 84.62, 75.0, 63.64]` |
 | `half_truncated` | Chỉ lấy 7 từ đầu (`"Hôm nay ... Hà Nội"`) | **36.79** | 0.3679 | `[100.0, 100.0, 100.0, 100.0]` |
-| `word_scrambled` | Đảo ngược toàn bộ thứ tự từ trong câu | **5.49** | 1.0000 | `[100.0, 3.85, 2.08, 1.14]` |
+| `word_scrambled` | Xáo trộn ngẫu nhiên trật tự từ (`seed=42`) | **10.99** | 1.0000 | `[100.0, 15.38, 4.17, 2.27]` |
 
 ---
 

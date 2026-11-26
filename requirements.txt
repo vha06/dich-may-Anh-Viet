@@ -1,6 +1,7 @@
 # Core Deep Learning & Tokenization
 torch>=2.0.0
-tokenizers>=0.15.0
+tokenizers>=0.20.0
+# sentencepiece>=0.1.99  # Optional: for SentencePieceTokenizer comparison
 numpy>=1.24.0
 
 # Evaluation Metrics (Standard WMT/ACL BLEU)
