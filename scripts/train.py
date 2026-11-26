@@ -135,6 +135,7 @@ def main() -> None:
         checkpoint_dir=cfg["checkpoint"]["dir"],
         teacher_forcing_ratio=cfg["training"]["teacher_forcing_ratio"],
         max_decode_len=cfg["data"]["max_len"],
+        early_stopping_patience=cfg["training"].get("early_stopping_patience"),
     )
 
     trainer.fit(train_loader, val_loader, num_epochs=cfg["training"]["num_epochs"])

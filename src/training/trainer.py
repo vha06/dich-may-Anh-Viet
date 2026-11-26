@@ -31,6 +31,7 @@ class Trainer:
         checkpoint_dir: str = "checkpoints",
         teacher_forcing_ratio: float = 0.5,
         max_decode_len: int = 128,
+        early_stopping_patience: int | None = None,
     ) -> None:
         self.model = model.to(device)
         self.optimizer = optimizer
@@ -43,6 +44,7 @@ class Trainer:
         self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
         self.teacher_forcing_ratio = teacher_forcing_ratio
         self.max_decode_len = max_decode_len
+        self.early_stopping_patience = early_stopping_patience
         self.best_bleu = 0.0
 
     def train_epoch(self, dataloader: DataLoader) -> float:
@@ -136,8 +138,9 @@ class Trainer:
         val_loader: DataLoader,
         num_epochs: int = 20,
     ) -> dict:
-        """Huấn luyện đầy đủ num_epochs, lưu checkpoint tốt nhất."""
+        """Huấn luyện đầy đủ num_epochs, hỗ trợ Early Stopping và lưu checkpoint tốt nhất."""
         history = {"train_loss": [], "val_loss": [], "val_bleu": []}
+        epochs_no_improve = 0
 
         for epoch in range(1, num_epochs + 1):
             start = time.time()
@@ -168,8 +171,20 @@ class Trainer:
 
             if val_bleu > self.best_bleu:
                 self.best_bleu = val_bleu
+                epochs_no_improve = 0
                 self._save_checkpoint(epoch, val_bleu)
                 print(f"  → Lưu checkpoint mới (BLEU = {val_bleu:.2f})")
+            else:
+                epochs_no_improve += 1
+                if (
+                    self.early_stopping_patience is not None
+                    and epochs_no_improve >= self.early_stopping_patience
+                ):
+                    print(
+                        f"\nEarly stopping: Val BLEU không cải thiện sau "
+                        f"{self.early_stopping_patience} epochs liên tiếp."
+                    )
+                    break
 
         print(f"\nHuấn luyện xong! Best BLEU: {self.best_bleu:.2f}")
         return history
