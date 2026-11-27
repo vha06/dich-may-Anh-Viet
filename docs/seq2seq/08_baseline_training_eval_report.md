@@ -151,18 +151,52 @@ Tất cả các câu trích dẫn dưới đây lấy nguyên văn từ `outputs
 
 ---
 
-## 6. Tổng kết & Đề xuất cho Bước Tiếp Theo
+## 6. Đối chiếu Thực nghiệm: Baseline `v1` vs Baseline `v2` (Dữ liệu thống nhất + `BucketBatchSampler`)
+
+Sau khi toàn nhóm chốt chuẩn dữ liệu Mảng 1 (`131,942` cặp `train` lọc `max_words = 128`, bộ từ điển `bpe_{en,vi}.json` tái huấn luyện đồng bộ), nhóm chạy lại thực nghiệm **`v2` (`ha_baseline_lstm_v2_unified` trên W&B)** giữ nguyên hoàn toàn kiến trúc **15.82M tham số** và siêu tham số tối ưu trong [`configs/baseline_lstm.yaml`](../../configs/baseline_lstm.yaml), chỉ bật thêm **`data.use_bucketing: true`** (`BucketBatchSampler`) để tăng tốc huấn luyện.
+
+### 6.1. Bảng so sánh Thời gian & Điểm SacreBLEU Tổng thể
+
+> **Chuẩn SacreBLEU Signature:** `nrefs:1|case:mixed|eff:no|tok:13a|smooth:exp|version:2.6.0`
+
+| Hạng mục | `v1` *(Cũ: `shuffle=True`, `132,160` câu)* | `v2` *(Thống nhất + Bucketing, `131,942` câu)* | Chênh lệch (`v2 - v1`) |
+| :--- | :---: | :---: | :---: |
+| **Tổng thời gian train (20 epochs)** | `16,882.33s` (**4.69 giờ**) | `8,518.73s` (**2.37 giờ**, Ep 12–20 `~4.7 phút/ep`) | **Nhanh hơn 1.98x** *(tiết kiệm `~2.32 giờ`)* |
+| **Epoch đạt Best (`val_bleu`)** | Epoch 15 (`val_loss = 2.4322`, `es = 5` ở Ep 20) | Epoch 18 (`val_loss = 2.4938`, Ep 20 `val_loss = 2.4874`, `es = 2`) | — |
+| **Val (`tst2012`) – Greedy** | `23.75` (`BP=0.9810`, `sys_len=33,682`) | `23.14` (`BP=0.9692`, `sys_len=33,287`) | **`-0.61`** |
+| **Val (`tst2012`) – Beam (`k=4, α=0.6`)** | `24.58` (`BP=0.9743`, `sys_len=33,457`) | `23.81` (`BP=0.9574`, `sys_len=32,896`) | **`-0.77`** |
+| **Test (`tst2013`) – Greedy** | `25.78` (`BP=0.9624`, `sys_len=32,478`) | `25.27` (`BP=0.9620`, `sys_len=32,464`) | **`-0.51`** |
+| **Test (`tst2013`) – Beam (`k=4, α=0.6`)** | **`26.90`** (`BP=0.9620`, `P=[60.95, 35.12, 21.39, 13.35]`) | **`26.65`** (`BP=0.9596`, `P=[60.94, 35.02, 21.20, 13.15]`) | **`-0.25`** |
+
+### 6.2. Đối chiếu theo Độ dài Câu nguồn trên Tập Test (`tst2013`)
+
+| Nhóm độ dài `src` | Số câu | `v2` Greedy | `v2` Beam (`v2` Beam − Greedy) | `v1` Beam | Chênh lệch Beam (`v2 - v1`) |
+| :--- | :---: | :---: | :---: | :---: | :---: |
+| **`1–10` từ** | 292 | `26.25` | `26.10` (`-0.15`) | `26.37` | **`-0.27`** |
+| **`11–20` từ** | 445 | `26.04` | **`27.16`** (`+1.12`) | **`27.16`** | **`+0.00`** |
+| **`21–35` từ** | 363 | `25.43` | **`26.80`** (`+1.37`) | **`26.86`** | **`-0.06`** |
+| **`>35` từ** | 168 | `24.23` | **`26.20`** (`+1.97`) | **`26.89`** | **`-0.69`** |
+
+### 6.3. Đúc kết Kỹ thuật từ So sánh `v1` vs `v2`
+
+1. **Đánh đổi Tốc độ vs Tổng quát hóa của static `BucketBatchSampler`:** Nhờ giảm chiều dài đệm trung bình mỗi batch (`T_max` từ `90.41` xuống `27.19`), thời gian huấn luyện rút ngắn **gần một nửa (`4.69h -> 2.37h`)**, trong khi kết quả Beam Search trên `test` vẫn bám rất sát (`26.65` vs `26.90`, chỉ lệch `-0.25 BLEU`). Đặc biệt hai nhóm câu phổ biến nhất (`11–20` và `21–35` từ, chiếm `63.7%` tập test) đạt hiệu năng **tương đương tuyệt đối** (`27.16` vs `27.16`, `26.80` vs `26.86`).
+2. **Vì sao nhóm `>35` từ giảm nhẹ (`-0.69`) và điểm dao động mạnh hơn ở `v2`?** Do `v2` đã lọc bỏ `218` cặp câu `>128` từ khỏi `train` và `BucketBatchSampler` gom các câu siêu dài vào chỉ một số ít batch cuối (làm ít đa dạng tổ hợp batch ngắn/dài khi cập nhật trọng số và hơi tăng `grad_norm`: `0.5102` vs `0.4532`). Dù vậy, trên `v2`, **Beam Search (`k=4, α=0.6`)** vẫn mang lại mức tăng rất ấn tượng **`+1.38 BLEU`** trên toàn `test` (`25.27 -> 26.65`) và **`+1.97 BLEU`** riêng ở câu `>35` từ (`24.23 -> 26.20`).
+3. **Lý do dừng ở Epoch 20:** Ở `v2`, `val_loss` từ Epoch 15 (`2.4936`) đến Epoch 20 (`2.4874`) gần như đi ngang (chỉ giảm `0.0062`), trong khi `train_loss` giảm nhanh (`2.2412 -> 2.1429`) cho thấy mô hình đã chạm ngưỡng bão hòa của `lr = 0.001`. Vì vậy checkpoint Epoch 18 (`26.65` Test Beam) được chốt làm **mốc Baseline chính thức trên bộ dữ liệu thống nhất** để so sánh công bằng với **Transformer** ở Tuần 3.
+
+---
+
+## 7. Tổng kết & Đề xuất cho Bước Tiếp Theo
 
 ### Tổng kết Giai đoạn 2 (Baseline)
-- Đã hoàn tất huấn luyện và chốt chuẩn đối chiếu chính thức cho **Baseline Seq2Seq BiLSTM-2L + Luong General Attention (15.82M tham số)** trên IWSLT'15 Anh–Việt:
-  - **Validation (`tst2012`):** **23.75** (Greedy) \| **24.58** (Beam `k=4, α=0.6`)
-  - **Test (`tst2013`):** **25.78** (Greedy) \| **26.90** (Beam `k=4, α=0.6`)
-- Hạ tầng `Trainer`, `SacreBLEU`, `Greedy/Beam Decode`, checkpoint resume và W&B logging đã được kiểm chứng hoạt động ổn định trong thực tế gần 5 giờ huấn luyện GPU.
+- Đã hoàn tất huấn luyện và kiểm chứng đầy đủ cho **Baseline Seq2Seq BiLSTM-2L + Luong General Attention (15.82M tham số)** trên IWSLT'15 Anh–Việt:
+  - **Bản `v1` (`shuffle=True`, trước thống nhất):** `val = 23.75 / 24.58` \| `test = 25.78 / 26.90` (Greedy / Beam `k=4, α=0.6`, train `4.69h`).
+  - **Bản `v2` (Mốc chính thức trên dữ liệu thống nhất `131,942` + BPE mới + `BucketBatchSampler`):** `val = 23.14 / 23.81` \| `test = 25.27 / 26.65` (Greedy / Beam `k=4, α=0.6`, train `2.37h`).
+- Hạ tầng `Trainer`, `SacreBLEU`, `Greedy/Beam Decode`, checkpoint resume và W&B logging đã được kiểm chứng hoạt động ổn định trong cả hai lần chạy thực tế.
 
 ### Đề xuất cho Tuần 3 & Tuần 4
 1. **Tuần 3 — Triển khai kiến trúc Transformer từ đầu (`src/models/transformer/`):**
-   - Tận dụng lại hoàn toàn `DataLoader`, `BPETokenizer 8,000`, `Trainer`, `NoamScheduler`, `TranslationLoss (label_smoothing = 0.1)`, và `scripts/evaluate.py`.
-   - Kiểm chứng giả thuyết: cơ chế **Multi-Head Self-Attention** giúp Transformer xử lý vượt trội các câu dài/nhiều mệnh đề (giải quyết lỗi lặp từ #219, bỏ sót vế #1203) và giữ thông tin vị trí/tên riêng tốt hơn RNN tuần tự.
+   - Tận dụng lại hoàn toàn `DataLoader` (có thể cân nhắc giữ `BucketBatchSampler` vì cực kỳ có lợi cho Attention $\mathcal{O}(L^2)$), `BPETokenizer 8,000`, `Trainer`, `NoamScheduler`, `TranslationLoss (label_smoothing = 0.1)`, và `scripts/evaluate.py`.
+   - Đối chiếu trực tiếp trên cùng bộ dữ liệu thống nhất `131,942` / `1,553` / `1,268` với mốc **`26.65` Test Beam** của `Baseline v2` (và tham chiếu thêm `26.90` của `v1`).
 2. **Tuần 4 — Ablation Study đề xuất cho nhánh Seq2Seq LSTM (nếu thực nghiệm thêm):**
    - Chỉnh `ReduceLROnPlateau` (`patience=2`, `threshold=0.01` hoặc dùng `CosineAnnealingLR`) để kích hoạt giảm LR thực sự sau Epoch 10 thay vì giữ nguyên `1e-3`.
-   - Thử nghiệm `label_smoothing: 0.1`, `teacher_forcing_ratio < 1.0` (giảm Exposure Bias & cải thiện `BP`), và so sánh các biến thể Attention (`dot` vs `general` vs `concat`).
+   - Thử nghiệm `label_smoothing: 0.1`, `teacher_forcing_ratio < 1.0` (giảm Exposure Bias & cải thiện `BP`), và so sánh `use_bucketing=true` vs `false` hay các biến thể Attention (`dot` vs `general` vs `concat`).
