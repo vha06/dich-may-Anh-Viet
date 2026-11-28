@@ -242,6 +242,10 @@ docs/data/*
 docs/seq2seq/*
 !docs/seq2seq/*_report.md
 
+# Local draft transformer QA & notes (keep private, allow official reports)
+docs/transformer/*
+!docs/transformer/*_report.md
+
 # LaTeX build artifacts
 *.aux
 *.bbl
