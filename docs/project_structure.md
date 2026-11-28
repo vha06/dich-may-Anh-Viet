@@ -40,7 +40,8 @@ dich-may-Anh-Viet/
 │   │       ├── embeddings.py           # Scaled Token Embedding (nhân sqrt(d_model), khởi tạo chuẩn)
 │   │       ├── positional_encoding.py  # Mã hóa vị trí từ (Sinusoidal)
 │   │       ├── attention.py        # Scaled Dot-Product & Multi-Head Attention (lưu attention map)
-│   │       ├── layers.py           # Position-wise FFN, Residual Connection, LayerNorm
+│   │       ├── feed_forward.py     # Mạng Position-wise Feed-Forward (d_model -> d_ff -> d_model)
+│   │       ├── layers.py           # Residual Connection, LayerNorm (Pre-LN / Post-LN)
 │   │       ├── masks.py            # Tạo padding_mask và causal_mask (look-ahead mask)
 │   │       └── transformer.py      # EncoderLayer, DecoderLayer và toàn bộ Transformer
 │   │
