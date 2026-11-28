@@ -1,5 +1,9 @@
 """Transformer architecture modules implemented from scratch in PyTorch."""
 
+from src.models.transformer.attention import (
+    MultiHeadAttention,
+    scaled_dot_product_attention,
+)
 from src.models.transformer.embeddings import ScaledEmbedding
 from src.models.transformer.positional_encoding import (
     PositionalEncoding,
@@ -7,7 +11,9 @@ from src.models.transformer.positional_encoding import (
 )
 
 __all__ = [
+    "MultiHeadAttention",
     "PositionalEncoding",
     "ScaledEmbedding",
     "SinusoidalPositionalEncoding",
+    "scaled_dot_product_attention",
 ]
