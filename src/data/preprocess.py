@@ -1,4 +1,4 @@
-"""Tiền xử lý, lọc chất lượng và thống kê bộ dữ liệu IWSLT'15 En-Vi."""
+"""Tiền xử lý dữ liệu thô IWSLT'15 En–Vi: giải mã HTML, NFC, lọc nhiễu và thống kê."""
 
 from __future__ import annotations
 
@@ -6,117 +6,92 @@ import argparse
 import html
 import json
 import re
-import sys
+import statistics
 import unicodedata
 from pathlib import Path
-from typing import Any
 
+DEFAULT_MAX_WORDS = 128
 WHITESPACE_RE = re.compile(r"\s+")
 
 
 def clean_text(text: str) -> str:
-    """Giải mã HTML entities (2 lần), chuẩn hóa Unicode NFC, loại bỏ ký tự ẩn/điều khiển."""
-    # Unescape 2 lần để xử lý thực thể lồng nhau như &amp;apos; -> &apos; -> '
+    """Giải mã HTML entities 2 lần, chuẩn hóa NFC, bỏ ký tự điều khiển ẩn và gom khoảng trắng."""
     cleaned = html.unescape(html.unescape(text))
     cleaned = unicodedata.normalize("NFC", cleaned)
-    # Loại bỏ ký tự điều khiển/định dạng ẩn (Category C); giữ mọi whitespace (\x0c, \x85...) để không dính từ
     cleaned = "".join(
         ch for ch in cleaned if unicodedata.category(ch)[0] != "C" or ch.isspace()
     )
     return WHITESPACE_RE.sub(" ", cleaned).strip()
 
 
-def _percentile(sorted_values: list[int], q: float) -> float:
-    """Tính phân vị nội suy tuyến tính (q in [0, 100]) trên danh sách đã sắp xếp."""
-    if not sorted_values:
+def read_lines(path: Path) -> list[str]:
+    """Đọc dòng theo đúng \\n/\\r\\n, tránh tách nhầm \\x0c hay \\u2028 như splitlines()."""
+    with path.open("r", encoding="utf-8") as f:
+        return [line.rstrip("\r\n") for line in f]
+
+
+def write_lines(path: Path, lines: list[str]) -> None:
+    """Ghi danh sách dòng ra file theo chuẩn POSIX (có \\n ở cuối file)."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    content = ("\n".join(lines) + "\n") if lines else ""
+    path.write_text(content, encoding="utf-8")
+
+
+def _percentile(sorted_vals: list[int], pct: float) -> float:
+    if not sorted_vals:
         return 0.0
-    if len(sorted_values) == 1:
-        return float(sorted_values[0])
-    pos = (len(sorted_values) - 1) * (q / 100.0)
-    lo = int(pos)
-    hi = min(lo + 1, len(sorted_values) - 1)
-    frac = pos - lo
-    return sorted_values[lo] * (1.0 - frac) + sorted_values[hi] * frac
+    idx = (len(sorted_vals) - 1) * (pct / 100.0)
+    lo = int(idx)
+    hi = min(lo + 1, len(sorted_vals) - 1)
+    frac = idx - lo
+    return sorted_vals[lo] * (1.0 - frac) + sorted_vals[hi] * frac
 
 
-def _length_summary(lengths: list[int]) -> dict[str, float | int]:
-    """Tổng hợp các chỉ số thống kê độ dài câu theo từ."""
-    if not lengths:
+def compute_length_stats(lines: list[str]) -> dict[str, float | int]:
+    """Tính mean, median, p95, p99, min, max theo số từ."""
+    if not lines:
         return {"mean": 0.0, "median": 0.0, "p95": 0.0, "p99": 0.0, "min": 0, "max": 0}
-    sorted_lens = sorted(lengths)
+    lengths = sorted(len(line.split()) for line in lines)
     return {
-        "mean": round(sum(sorted_lens) / len(sorted_lens), 2),
-        "median": round(_percentile(sorted_lens, 50), 2),
-        "p95": round(_percentile(sorted_lens, 95), 2),
-        "p99": round(_percentile(sorted_lens, 99), 2),
-        "min": sorted_lens[0],
-        "max": sorted_lens[-1],
+        "mean": round(statistics.mean(lengths), 2),
+        "median": round(statistics.median(lengths), 2),
+        "p95": round(_percentile(lengths, 95), 2),
+        "p99": round(_percentile(lengths, 99), 2),
+        "min": lengths[0],
+        "max": lengths[-1],
     }
 
 
-def compute_split_stats(en_lines: list[str], vi_lines: list[str]) -> dict[str, Any]:
-    """Tính toán thống kê số từ và tỷ lệ độ dài cho các câu song ngữ En-Vi."""
-    if len(en_lines) != len(vi_lines):
-        raise ValueError(f"Số dòng không khớp: en={len(en_lines)}, vi={len(vi_lines)}")
-    en_lengths = [len(line.split()) for line in en_lines]
-    vi_lengths = [len(line.split()) for line in vi_lines]
-
-    # P1: Thống kê tỷ lệ độ dài (Length Ratio) và cảnh báo bất thường
-    ratios = []
-    abnormal_count = 0
-    for l_en, l_vi in zip(en_lengths, vi_lengths):
-        if l_en > 0 and l_vi > 0:
-            r = l_vi / l_en
-            ratios.append(r)
-            if (r > 3.0 or r < 0.33) and (l_en >= 4 or l_vi >= 4):
-                abnormal_count += 1
-
-    ratio_stats = {
-        "mean_ratio": round(sum(ratios) / len(ratios), 2) if ratios else 0.0,
-        "abnormal_count": abnormal_count,
-        "abnormal_pct": round(abnormal_count / len(ratios) * 100, 2) if ratios else 0.0,
-    }
-
-    return {
-        "num_sentences": len(en_lines),
-        "en_word_len": _length_summary(en_lengths),
-        "vi_word_len": _length_summary(vi_lengths),
-        "length_ratio": ratio_stats,
-    }
-
-
-def process_split(
-    src_path: Path,
-    tgt_path: Path,
-    out_src_path: Path,
-    out_tgt_path: Path,
+def preprocess_split(
+    en_path: Path,
+    vi_path: Path,
+    out_en_path: Path,
+    out_vi_path: Path,
     is_train: bool = False,
-    max_words: int | None = 128,
-    remove_duplicates: bool = True,
-) -> dict[str, Any]:
-    """Làm sạch một tập dữ liệu song ngữ và ghi file kết quả."""
-    # Không dùng splitlines(): nó tách cả \x0b, \x0c, \x85, \u2028... trong dòng thô -> lệch cặp câu
-    with src_path.open("r", encoding="utf-8") as f_src:
-        raw_src_lines = [line.rstrip("\n") for line in f_src]
-    with tgt_path.open("r", encoding="utf-8") as f_tgt:
-        raw_tgt_lines = [line.rstrip("\n") for line in f_tgt]
+    max_words: int | None = DEFAULT_MAX_WORDS,
+    keep_duplicates: bool = False,
+) -> dict:
+    """Làm sạch 1 cặp file .en/.vi. Chỉ lọc rỗng, độ dài và trùng lặp khi is_train=True."""
+    en_lines = read_lines(en_path)
+    vi_lines = read_lines(vi_path)
 
-    if len(raw_src_lines) != len(raw_tgt_lines):
+    if len(en_lines) != len(vi_lines):
         raise ValueError(
-            f"Số dòng nguồn và đích không khớp ({src_path.name}={len(raw_src_lines)}, "
-            f"{tgt_path.name}={len(raw_tgt_lines)})"
+            f"Số dòng không khớp: {en_path.name}={len(en_lines)}, "
+            f"{vi_path.name}={len(vi_lines)}"
         )
 
-    cleaned_src: list[str] = []
-    cleaned_tgt: list[str] = []
+    total = len(en_lines)
+    kept_en: list[str] = []
+    kept_vi: list[str] = []
     samples: list[dict[str, str]] = []
     seen_pairs: set[tuple[str, str]] = set()
 
     dropped_empty = 0
-    dropped_duplicate = 0
     dropped_too_long = 0
+    dropped_duplicate = 0
 
-    for raw_s, raw_t in zip(raw_src_lines, raw_tgt_lines):
+    for raw_s, raw_t in zip(en_lines, vi_lines):
         clean_s = clean_text(raw_s)
         clean_t = clean_text(raw_t)
 
@@ -125,231 +100,184 @@ def process_split(
                 dropped_empty += 1
                 continue
 
-            len_s, len_t = len(clean_s.split()), len(clean_t.split())
+            len_s = len(clean_s.split())
+            len_t = len(clean_t.split())
             if max_words is not None and max_words > 0 and (len_s > max_words or len_t > max_words):
                 dropped_too_long += 1
                 continue
 
-            pair = (clean_s, clean_t)
-            if remove_duplicates:
+            if not keep_duplicates:
+                pair = (clean_s, clean_t)
                 if pair in seen_pairs:
                     dropped_duplicate += 1
                     continue
                 seen_pairs.add(pair)
 
+        kept_en.append(clean_s)
+        kept_vi.append(clean_t)
+
         if len(samples) < 3 and (raw_s != clean_s or raw_t != clean_t):
-            samples.append(
-                {
-                    "raw_en": raw_s,
-                    "clean_en": clean_s,
-                    "raw_vi": raw_t,
-                    "clean_vi": clean_t,
-                }
-            )
+            samples.append({
+                "raw_en": raw_s,
+                "clean_en": clean_s,
+                "raw_vi": raw_t,
+                "clean_vi": clean_t,
+            })
 
-        cleaned_src.append(clean_s)
-        cleaned_tgt.append(clean_t)
+    if not is_train and len(kept_en) != total:
+        raise AssertionError(f"Tập non-train bị rơi dòng: {len(kept_en)} != {total}")
 
-    out_src_path.parent.mkdir(parents=True, exist_ok=True)
-    out_tgt_path.parent.mkdir(parents=True, exist_ok=True)
-    out_src_path.write_text("\n".join(cleaned_src) + "\n", encoding="utf-8")
-    out_tgt_path.write_text("\n".join(cleaned_tgt) + "\n", encoding="utf-8")
+    write_lines(out_en_path, kept_en)
+    write_lines(out_vi_path, kept_vi)
 
-    stats = compute_split_stats(cleaned_src, cleaned_tgt)
-    stats["raw_num_sentences"] = len(raw_src_lines)
-    stats["dropped"] = {
-        "empty": dropped_empty,
-        "duplicate": dropped_duplicate,
-        "too_long": dropped_too_long,
+    en_stats = compute_length_stats(kept_en)
+    vi_stats = compute_length_stats(kept_vi)
+    ratio = round(vi_stats["mean"] / en_stats["mean"], 4) if en_stats["mean"] > 0 else 0.0
+
+    return {
+        "total": total,
+        "kept": len(kept_en),
+        "dropped_empty": dropped_empty,
+        "dropped_too_long": dropped_too_long,
+        "dropped_duplicate": dropped_duplicate,
+        "en_stats": en_stats,
+        "vi_stats": vi_stats,
+        "length_ratio": ratio,
+        "samples": samples,
+        "_pairs": list(zip(kept_en, kept_vi)),
     }
-    stats["samples"] = samples
-    stats["pairs"] = set(zip(cleaned_src, cleaned_tgt))
-    stats["src_set"] = set(cleaned_src)
-    stats["tgt_set"] = set(cleaned_tgt)
-    return stats
 
 
-def verify_split_separation(
-    split_pairs: dict[str, set[tuple[str, str]]],
-    split_srcs: dict[str, set[str]],
-    split_tgts: dict[str, set[str]],
-) -> dict[str, Any]:
-    """Kiểm tra toàn diện độ trùng lặp/rò rỉ dữ liệu giữa các tập train, val và test (P1)."""
-    val_pairs = split_pairs["val"]
-    test_pairs = split_pairs["test"]
-    train_pairs = split_pairs["train"]
+def compute_overlap(
+    split_pairs: dict[str, list[tuple[str, str]]],
+) -> dict[str, dict[str, int]]:
+    """Kiểm tra rò rỉ dữ liệu giữa các tập ở 3 mức: pairs, source_only, target_only."""
+    if "val" in split_pairs and "test" in split_pairs:
+        if set(split_pairs["val"]) == set(split_pairs["test"]):
+            raise ValueError("Phát hiện tập val và test trùng hệt nhau!")
 
-    overlap = {
-        "pairs": {
-            "val_test": len(val_pairs & test_pairs),
-            "train_val": len(train_pairs & val_pairs),
-            "train_test": len(train_pairs & test_pairs),
-        },
-        "source_only": {
-            "val_test": len(split_srcs["val"] & split_srcs["test"]),
-            "train_val": len(split_srcs["train"] & split_srcs["val"]),
-            "train_test": len(split_srcs["train"] & split_srcs["test"]),
-        },
-        "target_only": {
-            "val_test": len(split_tgts["val"] & split_tgts["test"]),
-            "train_val": len(split_tgts["train"] & split_tgts["val"]),
-            "train_test": len(split_tgts["train"] & split_tgts["test"]),
-        },
-    }
-    if val_pairs == test_pairs:
-        raise ValueError("Cảnh báo: tập val và test bị trùng nhau hoàn toàn!")
+    overlap: dict[str, dict[str, int]] = {}
+    names = list(split_pairs.keys())
+    for i in range(len(names)):
+        for j in range(i + 1, len(names)):
+            a, b = names[i], names[j]
+            pa = set(split_pairs[a])
+            pb = set(split_pairs[b])
+            sa = {s for s, _ in split_pairs[a]}
+            sb = {s for s, _ in split_pairs[b]}
+            ta = {t for _, t in split_pairs[a]}
+            tb = {t for _, t in split_pairs[b]}
+            overlap[f"{a}_vs_{b}"] = {
+                "pairs": len(pa & pb),
+                "source_only": len(sa & sb),
+                "target_only": len(ta & tb),
+            }
     return overlap
 
 
+def preprocess_all(
+    raw_dir: Path = Path("data/raw"),
+    processed_dir: Path = Path("data/processed"),
+    max_words: int | None = DEFAULT_MAX_WORDS,
+    keep_duplicates: bool = False,
+) -> dict:
+    """Tiền xử lý toàn bộ 3 tập train/val/test, kiểm tra toàn vẹn và xuất stats.json."""
+    splits = {
+        "train": ("train.en", "train.vi", True),
+        "val": ("tst2012.en", "tst2012.vi", False),
+        "test": ("tst2013.en", "tst2013.vi", False),
+    }
+
+    report: dict = {
+        "config": {
+            "max_words": max_words,
+            "keep_duplicates": keep_duplicates,
+            "lowercase": False,
+        },
+        "splits": {},
+    }
+    split_pairs: dict[str, list[tuple[str, str]]] = {}
+
+    for split_name, (en_file, vi_file, is_train) in splits.items():
+        en_path = raw_dir / en_file
+        vi_path = raw_dir / vi_file
+
+        if not en_path.exists() or not vi_path.exists():
+            print(f"[BỎ QUA] Không tìm thấy file cho split '{split_name}'.")
+            continue
+
+        res = preprocess_split(
+            en_path=en_path,
+            vi_path=vi_path,
+            out_en_path=processed_dir / f"{split_name}.en",
+            out_vi_path=processed_dir / f"{split_name}.vi",
+            is_train=is_train,
+            max_words=max_words,
+            keep_duplicates=keep_duplicates,
+        )
+
+        pairs = res.pop("_pairs")
+        samples = res.pop("samples")
+        split_pairs[split_name] = pairs
+        report["splits"][split_name] = res
+
+        print(
+            f"[{split_name:5s}] Tổng: {res['total']:>7,} | Giữ: {res['kept']:>7,} | "
+            f"Rỗng: {res['dropped_empty']:>3} | Dài: {res['dropped_too_long']:>3} | "
+            f"Trùng: {res['dropped_duplicate']:>4} | Ratio(VI/EN): {res['length_ratio']:.2f}"
+        )
+
+        if split_name == "train" and samples:
+            print("\n=== 3 cặp câu mẫu trước / sau khi làm sạch (train) ===")
+            for idx, sm in enumerate(samples, 1):
+                print(f"  [{idx}] RAW EN  : {sm['raw_en'][:100]}")
+                print(f"      CLEAN EN: {sm['clean_en'][:100]}")
+                print(f"      RAW VI  : {sm['raw_vi'][:100]}")
+                print(f"      CLEAN VI: {sm['clean_vi'][:100]}")
+            print()
+
+    report["overlap_check"] = compute_overlap(split_pairs)
+
+    if "val" in report["splits"]:
+        assert report["splits"]["val"]["kept"] == report["splits"]["val"]["total"]
+    if "test" in report["splits"]:
+        assert report["splits"]["test"]["kept"] == report["splits"]["test"]["total"]
+
+    stats_path = processed_dir / "stats.json"
+    stats_path.parent.mkdir(parents=True, exist_ok=True)
+    stats_path.write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    print(f"Đã lưu thống kê tại: {stats_path}")
+    return report
+
+
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Tiền xử lý, lọc chất lượng và thống kê bộ dữ liệu IWSLT'15 En-Vi"
-    )
-    parser.add_argument(
-        "--raw-dir",
-        type=Path,
-        default=Path("data/raw"),
-        help="Thư mục chứa dữ liệu thô (mặc định: data/raw)",
-    )
-    parser.add_argument(
-        "--processed-dir",
-        type=Path,
-        default=Path("data/processed"),
-        help="Thư mục lưu dữ liệu sạch (mặc định: data/processed)",
-    )
+    parser = argparse.ArgumentParser(description="Tiền xử lý dữ liệu IWSLT'15 En–Vi.")
+    parser.add_argument("--raw-dir", type=Path, default=Path("data/raw"))
+    parser.add_argument("--processed-dir", type=Path, default=Path("data/processed"))
     parser.add_argument(
         "--max-words",
-        dest="max_words",
         type=int,
-        default=128,
-        help="Ngưỡng độ dài từ tối đa cho câu ở tập train; truyền <= 0 hoặc --no-max-words để tắt (mặc định: 128)",
-    )
-    parser.add_argument(
-        "--max-len",
-        dest="max_words",
-        type=int,
-        help="Alias cho --max-words",
-    )
-    parser.add_argument(
-        "--no-max-words",
-        action="store_true",
-        help="Tắt lọc độ dài câu tối đa ở tập train",
+        default=DEFAULT_MAX_WORDS,
+        help="Số từ tối đa trên tập train (nhập 0 để tắt lọc độ dài).",
     )
     parser.add_argument(
         "--keep-duplicates",
         action="store_true",
-        help="Giữ lại các cặp câu trùng lặp trong tập train",
+        help="Giữ lại các cặp câu trùng lặp trên tập train.",
     )
     return parser.parse_args()
 
 
-def main() -> int:
-    if hasattr(sys.stdout, "reconfigure"):
-        sys.stdout.reconfigure(encoding="utf-8")
-
+def main() -> None:
     args = parse_args()
-    raw_dir: Path = args.raw_dir
-    processed_dir: Path = args.processed_dir
-    max_words: int | None = (
-        None if (args.no_max_words or args.max_words is None or args.max_words <= 0) else args.max_words
+    max_words = None if args.max_words <= 0 else args.max_words
+    preprocess_all(
+        raw_dir=args.raw_dir,
+        processed_dir=args.processed_dir,
+        max_words=max_words,
+        keep_duplicates=args.keep_duplicates,
     )
-
-    split_specs = [
-        ("train", "train.en", "train.vi", "train.en", "train.vi", True),
-        ("val", "tst2012.en", "tst2012.vi", "val.en", "val.vi", False),
-        ("test", "tst2013.en", "tst2013.vi", "test.en", "test.vi", False),
-    ]
-
-    all_stats: dict[str, Any] = {}
-    split_pairs: dict[str, set[tuple[str, str]]] = {}
-    split_srcs: dict[str, set[str]] = {}
-    split_tgts: dict[str, set[str]] = {}
-    sample_preview: list[dict[str, str]] = []
-
-    for split_name, raw_en, raw_vi, out_en, out_vi, is_train in split_specs:
-        res = process_split(
-            src_path=raw_dir / raw_en,
-            tgt_path=raw_dir / raw_vi,
-            out_src_path=processed_dir / out_en,
-            out_tgt_path=processed_dir / out_vi,
-            is_train=is_train,
-            max_words=max_words,
-            remove_duplicates=not args.keep_duplicates,
-        )
-        split_pairs[split_name] = res.pop("pairs")
-        split_srcs[split_name] = res.pop("src_set")
-        split_tgts[split_name] = res.pop("tgt_set")
-        samples = res.pop("samples")
-        if split_name == "val" or not sample_preview:
-            sample_preview = samples or sample_preview
-        all_stats[split_name] = res
-
-    overlap = verify_split_separation(split_pairs, split_srcs, split_tgts)
-    report = {
-        "config": {
-            "max_words": max_words,
-            "remove_duplicates": not args.keep_duplicates,
-        },
-        "splits": all_stats,
-        "overlap_check": overlap,
-    }
-
-    stats_path = processed_dir / "stats.json"
-    stats_path.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
-
-    print("=== Báo cáo Tiền xử lý dữ liệu IWSLT'15 En-Vi ===")
-    for name, s in all_stats.items():
-        en_s = s["en_word_len"]
-        vi_s = s["vi_word_len"]
-        drop = s["dropped"]
-        ratio_s = s["length_ratio"]
-        print(
-            f"\n[{name.upper()}] Gốc: {s['raw_num_sentences']:,} -> Sau xử lý: {s['num_sentences']:,} cặp câu"
-        )
-        if name == "train":
-            max_label = f"> {max_words} từ" if max_words is not None else "tắt"
-            print(
-                f"  Đã lọc bỏ -> rỗng: {drop['empty']}, trùng lặp: {drop['duplicate']}, "
-                f"quá dài ({max_label}): {drop['too_long']}"
-            )
-        print(
-            f"  Độ dài EN (từ): mean={en_s['mean']}, median={en_s['median']}, "
-            f"p95={en_s['p95']}, p99={en_s['p99']}, min={en_s['min']}, max={en_s['max']}"
-        )
-        print(
-            f"  Độ dài VI (từ): mean={vi_s['mean']}, median={vi_s['median']}, "
-            f"p95={vi_s['p95']}, p99={vi_s['p99']}, min={vi_s['min']}, max={vi_s['max']}"
-        )
-        print(
-            f"  Tỷ lệ độ dài (VI/EN): trung bình={ratio_s['mean_ratio']}, "
-            f"lệch bất thường (>3x hoặc <0.33x): {ratio_s['abnormal_count']} câu ({ratio_s['abnormal_pct']}%)"
-        )
-
-    print("\n=== Kiểm tra phân chia tập dữ liệu (Overlap Check Toàn diện) ===")
-    print(f"  Trùng cả cặp (pairs):")
-    print(f"    val vs test  : {overlap['pairs']['val_test']} cặp")
-    print(f"    train vs val : {overlap['pairs']['train_val']} cặp")
-    print(f"    train vs test: {overlap['pairs']['train_test']} cặp")
-    print(f"  Trùng câu nguồn tiếng Anh (source_only):")
-    print(f"    val vs test  : {overlap['source_only']['val_test']} câu")
-    print(f"    train vs val : {overlap['source_only']['train_val']} câu")
-    print(f"    train vs test: {overlap['source_only']['train_test']} câu")
-
-    print("\n=== 3 cặp câu mẫu trước và sau khi làm sạch ===")
-    for idx, sample in enumerate(sample_preview[:3], start=1):
-        print(f"Mẫu {idx}:")
-        print(f"  [Raw EN]  : {sample['raw_en']}")
-        print(f"  [Clean EN]: {sample['clean_en']}")
-        print(f"  [Raw VI]  : {sample['raw_vi']}")
-        print(f"  [Clean VI]: {sample['clean_vi']}")
-
-    print(f"\n✓ Đã lưu thống kê chi tiết tại: {stats_path}")
-
-    # Self-check bảo toàn số dòng
-    assert all_stats["val"]["num_sentences"] == 1553, "Lỗi: Tập val không đủ 1.553 dòng!"
-    assert all_stats["test"]["num_sentences"] == 1268, "Lỗi: Tập test không đủ 1.268 dòng!"
-    return 0
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    main()
