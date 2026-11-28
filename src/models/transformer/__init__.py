@@ -5,6 +5,7 @@ from src.models.transformer.attention import (
     scaled_dot_product_attention,
 )
 from src.models.transformer.embeddings import ScaledEmbedding
+from src.models.transformer.feed_forward import PositionWiseFeedForward
 from src.models.transformer.positional_encoding import (
     PositionalEncoding,
     SinusoidalPositionalEncoding,
@@ -12,6 +13,7 @@ from src.models.transformer.positional_encoding import (
 
 __all__ = [
     "MultiHeadAttention",
+    "PositionWiseFeedForward",
     "PositionalEncoding",
     "ScaledEmbedding",
     "SinusoidalPositionalEncoding",
