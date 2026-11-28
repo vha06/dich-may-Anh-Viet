@@ -37,6 +37,7 @@ dich-may-Anh-Viet/
 │   │   │   └── seq2seq.py          # Ghép nối Encoder-Attention-Decoder
 │   │   │
 │   │   └── transformer/            # Mô hình chính Tuần 3
+│   │       ├── embeddings.py           # Scaled Token Embedding (nhân sqrt(d_model), khởi tạo chuẩn)
 │   │       ├── positional_encoding.py  # Mã hóa vị trí từ (Sinusoidal)
 │   │       ├── attention.py        # Scaled Dot-Product & Multi-Head Attention (lưu attention map)
 │   │       ├── layers.py           # Position-wise FFN, Residual Connection, LayerNorm
