@@ -7,6 +7,12 @@ from src.models.transformer.attention import (
 from src.models.transformer.embeddings import ScaledEmbedding
 from src.models.transformer.feed_forward import PositionWiseFeedForward
 from src.models.transformer.layers import SublayerConnection
+from src.models.transformer.masks import (
+    create_causal_mask,
+    create_masks,
+    create_padding_mask,
+    create_target_mask,
+)
 from src.models.transformer.positional_encoding import (
     PositionalEncoding,
     SinusoidalPositionalEncoding,
@@ -19,5 +25,9 @@ __all__ = [
     "ScaledEmbedding",
     "SinusoidalPositionalEncoding",
     "SublayerConnection",
+    "create_causal_mask",
+    "create_masks",
+    "create_padding_mask",
+    "create_target_mask",
     "scaled_dot_product_attention",
 ]
